@@ -16,6 +16,14 @@ export type ProductId =
   | "ice_cream_strawberry"
   | "printer_branded";
 
+// Products the harbor sells (v1.1: exactly four)
+export const HARBOR_SELL_PRODUCTS: ProductId[] = [
+  "ice_cream_strawberry",
+  "laptop_whitelabel",
+  "printer_branded",
+  "bauxite",
+];
+
 export type FirmType = "farm" | "factory" | "store";
 
 export type NodeType = "city" | "town" | "harbor";
@@ -30,9 +38,9 @@ export interface MapLink {
   id: EntityId;
   fromNodeId: EntityId;
   toNodeId: EntityId;
-  baseCost: number;       // cost per unit transported
+  baseCost: number;       // € per unit transported per link
   capacity: number;       // max units per turn
-  investmentLevel: number; // 0 = base, higher = upgraded
+  investmentLevel: number;
 }
 
 export interface CityNode {
@@ -40,17 +48,17 @@ export interface CityNode {
   name: string;
   type: NodeType;
   population: number;
-  firmSlots: number;       // max firms that can be built here
-  energyCostMultiplier: number; // relative to harbor baseline
+  firmSlots: number;
+  energyCostMultiplier: number;
   hasHarborAccess: boolean;
-  position: { x: number; y: number }; // for map rendering
+  position: { x: number; y: number };
 }
 
 export interface HarborNode {
   id: EntityId;
   name: string;
   position: { x: number; y: number };
-  prices: Record<ProductId, number>; // current buy prices
+  prices: Record<ProductId, number>;
 }
 
 // ============================================================
@@ -92,20 +100,28 @@ export interface Investment {
   id: EntityId;
   type: InvestmentType;
   status: InvestmentStatus;
-  turnsRemaining: number; // 0 when complete
-  costPaid: number;       // book value (no depreciation in MVP)
+  turnsRemaining: number;
+  costPaid: number;
 }
 
 // ============================================================
-// Production
+// Production line configuration (v1.1)
+// Each completed production_line investment has one of these.
 // ============================================================
 
-export interface ProductionLineConfig {
-  inputProduct: ProductId;
-  inputQuantity: number;
-  outputProduct: ProductId;
-  outputQuantity: number;
-  turnsPerBatch: number;
+export type RecipeKey =
+  | "chicken"
+  | "chicken_soup"
+  | "alumina_refining"
+  | "aluminium_smelting"
+  | "laptop_branding";
+
+export type SourceType = "harbor" | "own_inventory" | "spot_market";
+
+export interface ProductionLineSetup {
+  investmentId: EntityId;   // which production_line investment this belongs to
+  recipe: RecipeKey | null; // null = not configured yet
+  sourceType: SourceType;
 }
 
 // ============================================================
@@ -115,7 +131,7 @@ export interface ProductionLineConfig {
 export interface InventoryLine {
   product: ProductId;
   quantity: number;
-  unitCost: number; // weighted average cost basis
+  unitCost: number;
 }
 
 // ============================================================
@@ -136,15 +152,15 @@ export type TransactionCategory =
 export interface Transaction {
   id: EntityId;
   turn: number;
-  firmId: EntityId | null;       // null = corporate-level entry
+  firmId: EntityId | null;
   corporationId: EntityId;
   category: TransactionCategory;
-  counterparty: string;          // human-readable: "Harbor", rival name, own firm name
-  product: ProductId | null;     // null for non-product entries (interest, training)
+  counterparty: string;
+  product: ProductId | null;
   quantity: number | null;
   unitPrice: number | null;
-  total: number;                 // negative = expense, positive = revenue
-  description: string;           // e.g. "Bauxite — Harbor — 400t × €31/t"
+  total: number;
+  description: string;
 }
 
 // ============================================================
@@ -156,7 +172,7 @@ export interface Loan {
   corporationId: EntityId;
   principal: number;
   outstandingBalance: number;
-  annualInterestRate: number; // e.g. 0.08 = 8%
+  annualInterestRate: number;
   quarterlyPayment: number;
   turnTaken: number;
   durationTurns: number;
@@ -170,7 +186,7 @@ export type ContractStatus = "active" | "completed" | "breached" | "pending";
 
 export interface ContractParty {
   type: ContractPartyType;
-  corporationId: EntityId | null; // null if harbor or market
+  corporationId: EntityId | null;
   firmId: EntityId | null;
 }
 
@@ -182,11 +198,11 @@ export interface Contract {
   product: ProductId;
   volumePerTurn: number;
   unitPrice: number;
-  qualityThreshold: number;  // 0–1, minimum quality to fulfill
-  deliveryTurns: number;     // turns from order to delivery
+  qualityThreshold: number;
+  deliveryTurns: number;
   startTurn: number;
-  durationTurns: number;     // 1–2 short term; longer after €100k milestone
-  isInternal: boolean;       // true if both parties belong to same corporation
+  durationTurns: number;
+  isInternal: boolean;
   turnsExecuted: number;
 }
 
@@ -209,7 +225,7 @@ export interface TenderBid {
 export interface Tender {
   id: EntityId;
   direction: TenderDirection;
-  publishedByCorporationId: EntityId | null; // null = market tender
+  publishedByCorporationId: EntityId | null;
   product: ProductId;
   volumeRequired: number;
   targetUnitPrice: number;
@@ -219,7 +235,7 @@ export interface Tender {
   closeTurn: number;
   status: TenderStatus;
   bids: TenderBid[];
-  awardedBids: TenderBid[]; // may be partial, split across bidders
+  awardedBids: TenderBid[];
 }
 
 // ============================================================
@@ -232,13 +248,20 @@ export interface Firm {
   cityNodeId: EntityId;
   type: FirmType;
   name: string;
-  quality: number;           // 0–1, improves with training and labs
+  quality: number;
   investments: Investment[];
+  // Production line configs — one entry per completed production_line investment
+  productionLines: ProductionLineSetup[];
   inventory: InventoryLine[];
   activeContractIds: EntityId[];
   activeTenderIds: EntityId[];
-  // production state
-  productionProgress: number; // turns elapsed in current batch
+  productionProgress: Record<RecipeKey, number>; // per-recipe batch progress
+  // v1.1
+  sellToCompetitors: boolean;
+  // Retail price overrides (player-set). Falls back to config benchmark if absent.
+  retailPrices: Partial<Record<ProductId, number>>;
+  // Sales ramp progress: turns this product has been actively selling at this firm
+  salesRampTurns: Partial<Record<ProductId, number>>;
 }
 
 // ============================================================
@@ -253,9 +276,9 @@ export interface Corporation {
   firmIds: EntityId[];
   loanIds: EntityId[];
   activeContractIds: EntityId[];
-  cumulativeRevenue: number;          // tracks €100k milestone
-  trainingBudgetPerTurn: number;      // corporate training slider
-  marketingBudgetPerTurn: number;     // corporate marketing slider
+  cumulativeRevenue: number;
+  trainingBudgetPerTurn: number;
+  marketingBudgetPerTurn: number;
   multiYearContractsUnlocked: boolean;
 }
 
@@ -269,14 +292,13 @@ export type MacroEventType =
   | "commodity_price_shock"
   | "tender_opportunity"
   | "tender_closure"
-  | "barcode_scanning_available"; // fires turn of 1984 Q1
+  | "barcode_scanning_available";
 
 export interface MacroEvent {
   id: EntityId;
   type: MacroEventType;
   turn: number;
   description: string;
-  // effect payload — interpreted by engine based on type
   payload: Record<string, unknown>;
   acknowledged: boolean;
 }
@@ -286,7 +308,7 @@ export interface MacroEvent {
 // ============================================================
 
 export interface GameState {
-  turn: number;             // 0-indexed, turn 0 = 1980 Q1
+  turn: number;
   phase: "setup" | "playing" | "won" | "lost";
   corporations: Record<EntityId, Corporation>;
   cityNodes: Record<EntityId, CityNode>;
@@ -296,14 +318,15 @@ export interface GameState {
   contracts: Record<EntityId, Contract>;
   tenders: Record<EntityId, Tender>;
   loans: Record<EntityId, Loan>;
-  transactions: Transaction[];        // append-only ledger
-  pendingEvents: MacroEvent[];        // fires at start of next turn
+  transactions: Transaction[];
+  pendingEvents: MacroEvent[];
   eventHistory: MacroEvent[];
   barcodeAvailable: boolean;
+  recessionTurnsRemaining: number;
 }
 
 // ============================================================
-// Derived / computed (not stored in state, computed on read)
+// Derived / computed
 // ============================================================
 
 export interface FirmBooks {
@@ -327,4 +350,19 @@ export interface CorporateBooks {
   netWorth: number;
   firmBooks: FirmBooks[];
   lines: Transaction[];
+}
+
+// ============================================================
+// Open market sourcing (v1.1)
+// ============================================================
+
+export interface MarketSource {
+  type: "harbor" | "own_firm" | "rival_firm";
+  label: string;             // "Harbor", "Norvik Farm", "Rival Corp Store"
+  corporationId: EntityId | null;
+  firmId: EntityId | null;
+  unitPrice: number;
+  availableVolume: number;
+  isSpot: boolean;           // true = spot purchase (no contract), false = via contract
+  transportCost: number;     // additional cost per unit to reach destination node
 }

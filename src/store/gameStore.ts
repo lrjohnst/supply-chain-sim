@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import type { GameState, CorporateBooks } from "../types";
-import { newGame } from "../engine/newGame";
+import type { GameState, CorporateBooks, ProductId } from "../types";
+import { newGame, makeFirm } from "../engine/newGame";
 import { tick, type TickResult } from "../engine/tick";
 import { computeCorporateBooks } from "../engine/books";
 import { startInvestment } from "../engine/investments";
@@ -9,7 +9,7 @@ import { createContract } from "../engine/contracts";
 import { submitTenderBid } from "../engine/tenders";
 import type { InvestmentType, Contract } from "../types";
 
-export type Screen = "map" | "tenders" | "books" | "supplyChain";
+export type Screen = "map" | "tenders" | "books" | "finance" | "products";
 
 interface GameStore {
   gameState: GameState | null;
@@ -32,6 +32,8 @@ interface GameStore {
   setTrainingBudget: (amount: number) => void;
   setMarketingBudget: (amount: number) => void;
   buildFirm: (cityNodeId: string, type: "farm" | "factory" | "store", name: string) => string | null;
+  setRetailPrice: (firmId: string, product: ProductId, price: number) => void;
+  setSellToCompetitors: (firmId: string, enabled: boolean) => void;
 }
 
 const FIRM_BUILD_COST: Record<"farm" | "factory" | "store", number> = {
@@ -165,24 +167,30 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     const id = Math.random().toString(36).slice(2, 10);
-    gameState.firms[id] = {
-      id,
-      corporationId: playerCorp.id,
-      cityNodeId,
-      type,
-      name,
-      quality: 0.5,
-      investments: [],
-      inventory: [],
-      activeContractIds: [],
-      activeTenderIds: [],
-      productionProgress: 0,
-    };
+    gameState.firms[id] = makeFirm(id, playerCorp.id, cityNodeId, type, name);
     playerCorp.firmIds.push(id);
     playerCorp.cash -= cost;
 
     set({ gameState: { ...gameState } });
     return null;
+  },
+
+  setRetailPrice: (firmId, product, price) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const firm = gameState.firms[firmId];
+    if (!firm) return;
+    firm.retailPrices[product] = price;
+    set({ gameState: { ...gameState } });
+  },
+
+  setSellToCompetitors: (firmId, enabled) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const firm = gameState.firms[firmId];
+    if (!firm) return;
+    firm.sellToCompetitors = enabled;
+    set({ gameState: { ...gameState } });
   },
 }));
 

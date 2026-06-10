@@ -4,6 +4,7 @@ import { submitTenderBid } from "./tenders";
 import { startInvestment } from "./investments";
 import { takeLoan } from "./loans";
 import { generateId } from "./utils";
+import { makeFirm } from "./newGame";
 
 /** Run one turn of AI decision-making. Called after the player ends their turn. */
 export function runAI(state: GameState): void {
@@ -146,20 +147,7 @@ function buildFirm(
 ): void {
   const corp = state.corporations[corpId];
   const firmId = generateId();
-
-  state.firms[firmId] = {
-    id: firmId,
-    corporationId: corpId,
-    cityNodeId,
-    type,
-    name: `${corp.name} ${type.charAt(0).toUpperCase() + type.slice(1)}`,
-    quality: GameConfig.quality.baseQuality,
-    investments: [],
-    inventory: [],
-    activeContractIds: [],
-    activeTenderIds: [],
-    productionProgress: 0,
-  };
-
+  const name = `${corp.name} ${type.charAt(0).toUpperCase() + type.slice(1)}`;
+  state.firms[firmId] = makeFirm(firmId, corpId, cityNodeId, type, name);
   corp.firmIds.push(firmId);
 }

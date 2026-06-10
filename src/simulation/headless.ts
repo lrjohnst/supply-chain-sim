@@ -3,7 +3,7 @@
  * Run with: npx tsx src/simulation/headless.ts
  */
 
-import { newGame } from "../engine/newGame";
+import { newGame, makeFirm } from "../engine/newGame";
 import { tick } from "../engine/tick";
 import { computeCorporateBooks } from "../engine/books";
 import { corporationNetWorth } from "../engine/utils";
@@ -56,11 +56,7 @@ function buildFirm(
   if (corp.cash < COSTS[type]) return null;
 
   const id = Math.random().toString(36).slice(2, 10);
-  state.firms[id] = {
-    id, corporationId: corpId, cityNodeId, type, name,
-    quality: 0.5, investments: [], inventory: [],
-    activeContractIds: [], activeTenderIds: [], productionProgress: 0,
-  };
+  state.firms[id] = makeFirm(id, corpId, cityNodeId, type, name);
   corp.firmIds.push(id);
   corp.cash -= COSTS[type];
   return id;

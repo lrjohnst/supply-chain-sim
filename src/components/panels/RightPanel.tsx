@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { euros, pct, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
+import { estimatedDemand } from "../../engine/retail";
+import { transportCostToNode, linksToHarbor } from "../../engine/utils";
 import type { Firm, InvestmentType, ProductId } from "../../types";
 
 export default function RightPanel() {
@@ -140,7 +142,7 @@ export default function RightPanel() {
 // ------------------------------------------------------------------
 
 function FirmPanel({ firm }: { firm: Firm }) {
-  const { gameState, buildInvestment, addContract } = useGameStore();
+  const { gameState, buildInvestment, addContract, setRetailPrice, setSellToCompetitors } = useGameStore();
   const [invError, setInvError] = useState<string | null>(null);
   const [contractError, setContractError] = useState<string | null>(null);
 
@@ -218,6 +220,80 @@ function FirmPanel({ firm }: { firm: Firm }) {
           </div>
         </>
       )}
+
+      {/* Sell to competitors toggle (farms + factories) */}
+      {(firm.type === "farm" || firm.type === "factory") && (
+        <>
+          <hr />
+          <div style={sectionStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3>Sell to competitors</h3>
+                <div style={{ color: "var(--text-dim)", fontSize: 11, marginTop: 2 }}>
+                  Allow rivals to source from this firm at spot price
+                </div>
+              </div>
+              <button
+                style={{ borderColor: firm.sellToCompetitors ? "var(--green)" : undefined }}
+                onClick={() => setSellToCompetitors(firm.id, !firm.sellToCompetitors)}
+              >
+                {firm.sellToCompetitors ? "✓ Enabled" : "Disabled"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Retail price controls (stores) */}
+      {firm.type === "store" && (() => {
+        const sellable = getSellableProducts(firm);
+        if (sellable.length === 0) return null;
+        const city = gameState?.cityNodes[firm.cityNodeId];
+        return (
+          <>
+            <hr />
+            <div style={sectionStyle}>
+              <h3>Retail prices</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
+                {sellable.map((product) => {
+                  const benchmark = GameConfig.retailBenchmarkPrices[product as ProductId] ?? 0;
+                  const current = firm.retailPrices[product as ProductId] ?? benchmark;
+                  const demand = city ? estimatedDemand(city.population, product as ProductId, current) : 0;
+                  const maxDemand = city ? estimatedDemand(city.population, product as ProductId, benchmark) : 0;
+                  return (
+                    <div key={product}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ fontSize: 11, color: "var(--text)" }}>
+                          {product.replace(/_/g, " ")}
+                        </span>
+                        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
+                          est. {qty(demand)} / {qty(maxDemand)} units
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input
+                          type="number"
+                          style={{ flex: 1, fontSize: 11 }}
+                          value={current.toFixed(2)}
+                          step={0.1}
+                          min={0.01}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            if (!isNaN(v) && v > 0) setRetailPrice(firm.id, product as ProductId, v);
+                          }}
+                        />
+                        <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
+                          benchmark {euros(benchmark)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        );
+      })()}
 
       <HarborSourcingSection
         firm={firm}
@@ -306,6 +382,9 @@ function HarborSourcingSection({
   const playerCorp = Object.values(gameState.corporations).find((c) => c.isPlayer);
   if (!playerCorp) return null;
 
+  const city = gameState.cityNodes[firm.cityNodeId];
+  const transportCostPerUnit = transportCostToNode(gameState, firm.cityNodeId);
+
   // Show existing active harbor contracts for this firm
   const activeHarborContracts = firm.activeContractIds
     .map((id) => gameState.contracts[id])
@@ -383,8 +462,19 @@ function HarborSourcingSection({
           </div>
 
           {selectedProduct && (
-            <div style={{ fontSize: 11, color: "var(--text-dim)", background: "var(--bg)", padding: "6px 8px", borderRadius: 4 }}>
-              Harbor price: <strong style={{ color: "var(--text-head)" }}>{euros(harborPrice)}/u</strong>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", background: "var(--bg)", padding: "6px 8px", borderRadius: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span>Harbor price: <strong style={{ color: "var(--text-head)" }}>{euros(harborPrice)}/u</strong></span>
+              {transportCostPerUnit > 0 && (
+                <span style={{ color: "var(--warn)" }}>
+                  + transport: {euros(transportCostPerUnit)}/u ({linksToHarbor(gameState, firm.cityNodeId)} links)
+                </span>
+              )}
+              <span>Landed cost: <strong style={{ color: "var(--text-head)" }}>{euros(harborPrice + transportCostPerUnit)}/u</strong></span>
+              {city && selectedProduct && (
+                <span style={{ color: "var(--green)" }}>
+                  Est. demand: {qty(estimatedDemand(city.population, selectedProduct as ProductId))} units/turn
+                </span>
+              )}
             </div>
           )}
 
@@ -423,6 +513,14 @@ function HarborSourcingSection({
 const labelStyle: React.CSSProperties = {
   display: "block", fontSize: 11, color: "var(--text-dim)", marginBottom: 3,
 };
+
+function getSellableProducts(firm: Firm): string[] {
+  const has = (t: string) => firm.investments.some((i) => i.type === t && i.status === "complete");
+  const products: string[] = [];
+  if (has("grocery_section")) products.push("chicken", "chicken_soup", "ice_cream_strawberry");
+  if (has("electronics_section")) products.push("laptop_branded", "printer_branded");
+  return products;
+}
 
 // ------------------------------------------------------------------
 // Helpers

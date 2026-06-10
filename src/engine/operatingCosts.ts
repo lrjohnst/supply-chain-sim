@@ -1,6 +1,13 @@
-import type { GameState } from "../types";
+import type { GameState, Firm } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { postTransaction } from "./ledger";
+
+/** Operating cost for a firm = sum of operatingCostPerTurn for each COMPLETED investment. */
+export function firmOperatingCost(firm: Firm): number {
+  return firm.investments
+    .filter((i) => i.status === "complete")
+    .reduce((sum, inv) => sum + GameConfig.investments.operatingCostPerTurn[inv.type], 0);
+}
 
 /** Deduct per-firm operating costs, training, and corporate marketing budget. */
 export function deductOperatingCosts(state: GameState): void {
@@ -37,10 +44,11 @@ export function deductOperatingCosts(state: GameState): void {
       });
     }
 
-    // Per-firm operating costs
+    // Per-firm operating costs (scales with investments)
     for (const firmId of corp.firmIds) {
       const firm = state.firms[firmId];
-      const baseCost = GameConfig.firmOperatingCosts[firm.type];
+      const cost = firmOperatingCost(firm);
+      if (cost <= 0) continue;
 
       postTransaction({
         state,
@@ -52,7 +60,7 @@ export function deductOperatingCosts(state: GameState): void {
         product: null,
         quantity: null,
         unitPrice: null,
-        total: -baseCost,
+        total: -cost,
       });
     }
   }
@@ -71,20 +79,13 @@ export function updateQuality(state: GameState): void {
 
     for (const firmId of corp.firmIds) {
       const firm = state.firms[firmId];
-
       const hasLab = firm.investments.some(
         (i) => i.type === "quality_lab" && i.status === "complete"
       );
 
-      if (hasLab) {
-        firm.quality = Math.min(1, firm.quality + cfg.qualityGainPerTurnWithLab);
-      }
-
-      if (trainingActive) {
-        firm.quality = Math.min(1, firm.quality + cfg.qualityGainFromTraining);
-      } else {
-        firm.quality = Math.max(0, firm.quality - cfg.qualityDecayWithoutTraining);
-      }
+      if (hasLab) firm.quality = Math.min(1, firm.quality + cfg.qualityGainPerTurnWithLab);
+      if (trainingActive) firm.quality = Math.min(1, firm.quality + cfg.qualityGainFromTraining);
+      else firm.quality = Math.max(0, firm.quality - cfg.qualityDecayWithoutTraining);
     }
   }
 }

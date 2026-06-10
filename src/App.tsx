@@ -6,6 +6,7 @@ import BottomBar from "./components/panels/BottomBar";
 import TenderBoard from "./components/screens/TenderBoard";
 import BooksScreen from "./components/screens/BooksScreen";
 import FinanceScreen from "./components/screens/FinanceScreen";
+import ProductsScreen from "./components/screens/ProductsScreen";
 
 export default function App() {
   const { gameState, activeScreen, setScreen, startNewGame } = useGameStore();
@@ -35,7 +36,7 @@ export default function App() {
         <span style={{ color: "var(--gold)", fontWeight: 700, fontSize: 13, marginRight: 16, letterSpacing: "0.05em" }}>
           SUPPLY CHAIN SIM
         </span>
-        {(["map", "tenders", "books", "finance"] as const).map((s) => (
+        {(["map", "tenders", "books", "finance", "products"] as const).map((s) => (
           <NavTab key={s} label={NAV_LABELS[s]} active={activeScreen === s} onClick={() => setScreen(s as Screen)} />
         ))}
       </div>
@@ -53,6 +54,7 @@ export default function App() {
         {activeScreen === "tenders" && <TenderBoard />}
         {activeScreen === "books" && <BooksScreen />}
         {activeScreen === "finance" && <FinanceScreen />}
+        {activeScreen === "products" && <ProductsScreen />}
       </div>
 
       <BottomBar />
@@ -75,7 +77,7 @@ function NavTab({ label, active, onClick }: { label: string; active: boolean; on
   );
 }
 
-const NAV_LABELS: Record<string, string> = { map: "Map", tenders: "Tenders", books: "Books", finance: "Finance" };
+const NAV_LABELS: Record<string, string> = { map: "Map", tenders: "Tenders", books: "Books", finance: "Finance", products: "Products" };
 
 function StartScreen({ playerName, setPlayerName, onStart }: {
   playerName: string; setPlayerName: (v: string) => void; onStart: (name: string) => void;

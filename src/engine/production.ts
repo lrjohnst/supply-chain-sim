@@ -1,4 +1,4 @@
-import type { GameState, ProductId } from "../types";
+import type { GameState, ProductId, RecipeKey } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { addToInventory, removeFromInventory, inventoryQuantity } from "./utils";
 import { postTransaction } from "./ledger";
@@ -18,33 +18,21 @@ export function runProduction(state: GameState): void {
 
 function runFarmProduction(state: GameState, firmId: string): void {
   const firm = state.firms[firmId];
-  const quarter = (state.turn % GameConfig.game.quartersPerYear);
+  const quarter = state.turn % GameConfig.game.quartersPerYear;
   const seasonMultiplier = GameConfig.seasonal.yieldMultiplier[quarter];
 
   const cropCount = countInvestment(firm, "crop_fields");
   const livestockCount = countInvestment(firm, "livestock_facilities");
+  if (cropCount + livestockCount === 0) return;
 
   const irrigated = hasInvestment(firm, "irrigation_systems");
   const reliabilityMultiplier = irrigated ? 1.0 : 0.8 + Math.random() * 0.2;
 
-  // Each crop field produces raw chicken equivalents (simplified: one farm output)
-  const baseOutputPerField = 100; // units per turn
-  const cropOutput = Math.floor(
-    cropCount * baseOutputPerField * seasonMultiplier * reliabilityMultiplier
-  );
-
-  // Livestock produces raw chicken
-  const baseOutputPerLivestock = 80;
-  const livestockOutput = Math.floor(
-    livestockCount * baseOutputPerLivestock * reliabilityMultiplier
-  );
-
-  const totalOutput = cropOutput + livestockOutput;
-  if (totalOutput <= 0) return;
-
-  addToInventory(firm.inventory, "raw_chicken", totalOutput, 0); // farm cost is operating cost, not per-unit
-
-  // No input cost transaction — farm output cost basis is 0 (operating cost covers it)
+  const basePerField = 100;
+  const cropOutput = Math.floor(cropCount * basePerField * seasonMultiplier * reliabilityMultiplier);
+  const livestockOutput = Math.floor(livestockCount * 80 * reliabilityMultiplier);
+  const total = cropOutput + livestockOutput;
+  if (total > 0) addToInventory(firm.inventory, "raw_chicken", total, 0);
 }
 
 // ------------------------------------------------------------------
@@ -53,76 +41,75 @@ function runFarmProduction(state: GameState, firmId: string): void {
 
 function runFactoryProduction(state: GameState, firmId: string): void {
   const firm = state.firms[firmId];
+  const lineCount = countInvestment(firm, "production_line");
+  if (lineCount === 0) return;
 
-  // Find all contracts that source inputs TO this factory, or use harbor
-  // Production lines determine what this factory can make
-  const productionLineCount = countInvestment(firm, "production_line");
-  if (productionLineCount === 0) return;
+  // Each configured production line runs one recipe
+  const configuredLines = firm.productionLines.filter((pl) => pl.recipe !== null);
 
-  // Determine which recipes this factory can run based on its inventory
-  // and which chains the corporation has set up (indicated by active contracts)
-  const recipes = Object.entries(GameConfig.production) as [
-    string,
-    typeof GameConfig.production[keyof typeof GameConfig.production]
-  ][];
+  // Unconfigured lines: auto-select by available inventory (backward compat)
+  const unconfiguredCount = lineCount - configuredLines.length;
 
-  // Each production line runs one recipe per turn
-  // For MVP: factory auto-selects recipes based on available inventory
-  let linesAvailable = productionLineCount;
+  // Run configured lines
+  let linesUsed = 0;
+  for (const lineSetup of configuredLines) {
+    if (linesUsed >= lineCount) break;
+    if (!lineSetup.recipe) continue;
+    runRecipe(state, firmId, lineSetup.recipe);
+    linesUsed++;
+  }
 
-  for (const [, recipe] of recipes) {
-    if (linesAvailable <= 0) break;
-
-    const inputAvailable = inventoryQuantity(firm.inventory, recipe.inputProduct);
-    if (inputAvailable <= 0) continue;
-
-    // Check prerequisites
-    if (recipe.requiresPackaging && !hasInvestment(firm, "packaging_lines")) continue;
-    if (recipe.inputProduct === "laptop_whitelabel" && !hasInvestment(firm, "branding_facility")) continue;
-
-    // Smelting needs 2 turns — track progress on firm
-    if (recipe.turnsPerBatch > 1) {
-      firm.productionProgress += 1;
-      if (firm.productionProgress < recipe.turnsPerBatch) continue;
-      firm.productionProgress = 0;
+  // Auto-run unconfigured lines
+  if (unconfiguredCount > 0) {
+    const recipes: RecipeKey[] = [
+      "chicken", "chicken_soup", "alumina_refining", "aluminium_smelting", "laptop_branding",
+    ];
+    for (const recipe of recipes) {
+      if (linesUsed >= lineCount) break;
+      const cfg = GameConfig.production[recipe];
+      if (inventoryQuantity(firm.inventory, cfg.inputProduct) > 0) {
+        runRecipe(state, firmId, recipe);
+        linesUsed++;
+      }
     }
+  }
+}
 
-    // Calculate batch size based on available input (cap at one line's worth)
-    const maxBatchInput = 200; // units per production line per turn
-    const batchInput = Math.min(inputAvailable, maxBatchInput);
-    const batchesOfInput = batchInput / recipe.inputQuantity;
-    const outputQty = Math.floor(batchesOfInput * recipe.outputQuantity);
+function runRecipe(state: GameState, firmId: string, recipeKey: RecipeKey): void {
+  const firm = state.firms[firmId];
+  const recipe = GameConfig.production[recipeKey];
 
-    if (outputQty <= 0) continue;
+  // Prerequisite checks
+  if (recipe.requiresPackaging && !hasInvestment(firm, "packaging_lines")) return;
+  if (recipe.requiresBranding && !hasInvestment(firm, "branding_facility")) return;
 
-    const { removed, unitCost } = removeFromInventory(
-      firm.inventory,
-      recipe.inputProduct,
-      batchInput
-    );
+  // Multi-turn batches
+  if (recipe.turnsPerBatch > 1) {
+    firm.productionProgress[recipeKey] += 1;
+    if (firm.productionProgress[recipeKey] < recipe.turnsPerBatch) return;
+    firm.productionProgress[recipeKey] = 0;
+  }
 
-    if (removed <= 0) continue;
+  const inputAvailable = inventoryQuantity(firm.inventory, recipe.inputProduct);
+  if (inputAvailable <= 0) return;
 
-    const inputCostTotal = removed * unitCost;
-    const outputUnitCost = outputQty > 0 ? inputCostTotal / outputQty : 0;
+  const batchInput = Math.min(inputAvailable, GameConfig.productionBatchSize);
+  const outputQty = Math.floor((batchInput / recipe.inputQuantity) * recipe.outputQuantity);
+  if (outputQty <= 0) return;
 
-    addToInventory(firm.inventory, recipe.outputProduct, outputQty, outputUnitCost);
+  const { removed, unitCost } = removeFromInventory(firm.inventory, recipe.inputProduct, batchInput);
+  if (removed <= 0) return;
 
-    if (inputCostTotal > 0) {
-      postTransaction({
-        state,
-        turn: state.turn,
-        firmId: firm.id,
-        corporationId: firm.corporationId,
-        category: "input_cost",
-        counterparty: "Production",
-        product: recipe.inputProduct as ProductId,
-        quantity: removed,
-        unitPrice: unitCost,
-        total: -inputCostTotal,
-      });
-    }
+  const inputCostTotal = removed * unitCost;
+  const outputUnitCost = outputQty > 0 ? inputCostTotal / outputQty : 0;
+  addToInventory(firm.inventory, recipe.outputProduct, outputQty, outputUnitCost);
 
-    linesAvailable -= 1;
+  if (inputCostTotal > 0) {
+    postTransaction({
+      state, turn: state.turn, firmId: firm.id, corporationId: firm.corporationId,
+      category: "input_cost", counterparty: "Production",
+      product: recipe.inputProduct as ProductId,
+      quantity: removed, unitPrice: unitCost, total: -inputCostTotal,
+    });
   }
 }

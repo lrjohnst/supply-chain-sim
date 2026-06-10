@@ -32,9 +32,7 @@ function applyEvent(state: GameState, event: MacroEvent): void {
     }
 
     case "recession": {
-      // Stored as a game-level flag; retail engine reads it
-      (state as GameState & { recessionTurnsRemaining?: number }).recessionTurnsRemaining =
-        GameConfig.macroEvents.recessionDurationTurns;
+      state.recessionTurnsRemaining = GameConfig.macroEvents.recessionDurationTurns;
       break;
     }
 

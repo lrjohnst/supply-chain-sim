@@ -92,3 +92,47 @@ export function inventoryQuantity(
 ): number {
   return inventory.find((l) => l.product === product)?.quantity ?? 0;
 }
+
+/**
+ * Compute the number of transport links between a city node and the nearest
+ * harbor-access node, using BFS over the map link graph.
+ * Returns 0 if the node itself has harbor access.
+ */
+export function linksToHarbor(state: GameState, cityNodeId: string): number {
+  const start = state.cityNodes[cityNodeId];
+  if (!start) return 0;
+  if (start.hasHarborAccess) return 0;
+
+  // Build adjacency map
+  const adj: Record<string, string[]> = {};
+  for (const link of Object.values(state.mapLinks)) {
+    if (!adj[link.fromNodeId]) adj[link.fromNodeId] = [];
+    if (!adj[link.toNodeId]) adj[link.toNodeId] = [];
+    adj[link.fromNodeId].push(link.toNodeId);
+    adj[link.toNodeId].push(link.fromNodeId);
+  }
+
+  // BFS
+  const visited = new Set<string>();
+  const queue: { id: string; dist: number }[] = [{ id: cityNodeId, dist: 0 }];
+  visited.add(cityNodeId);
+
+  while (queue.length > 0) {
+    const { id, dist } = queue.shift()!;
+    const node = state.cityNodes[id];
+    if (node?.hasHarborAccess && id !== cityNodeId) return dist;
+    for (const neighbour of (adj[id] ?? [])) {
+      if (!visited.has(neighbour)) {
+        visited.add(neighbour);
+        queue.push({ id: neighbour, dist: dist + 1 });
+      }
+    }
+  }
+  return 999; // unreachable
+}
+
+/** Transport cost per unit to move harbor goods to a given node. */
+export function transportCostToNode(state: GameState, cityNodeId: string): number {
+  const links = linksToHarbor(state, cityNodeId);
+  return links * GameConfig.map.transportCostPerLink;
+}
