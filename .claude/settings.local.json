@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(New-Item -ItemType Directory -Force \"B:\\\\Repositories\\\\supply-chain-sim\\\\src\\\\engine\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"B:\\\\Repositories\\\\supply-chain-sim\\\\src\\\\types\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"B:\\\\Repositories\\\\supply-chain-sim\\\\src\\\\config\")",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}

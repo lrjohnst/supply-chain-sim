@@ -1,0 +1,91 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f1117;
+  --bg-panel:  #161b24;
+  --bg-card:   #1c2333;
+  --bg-hover:  #232d40;
+  --border:    #2a3347;
+  --text:      #c9d1e0;
+  --text-dim:  #6b7a94;
+  --text-head: #e8edf5;
+  --gold:      #d4a843;
+  --gold-dim:  #8a6b28;
+  --red:       #c0392b;
+  --blue:      #2980b9;
+  --blue-dim:  #1a5276;
+  --green:     #27ae60;
+  --green-dim: #1e8449;
+  --accent:    #4a90d9;
+  --danger:    #e74c3c;
+  --warn:      #f39c12;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: background 0.15s, border-color 0.15s;
+}
+button:hover { background: var(--bg-hover); border-color: var(--accent); }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+button.primary:hover { background: #5aa0e8; }
+button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+input, select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+}
+input:focus, select:focus { border-color: var(--accent); }
+
+h2 { font-size: 14px; font-weight: 600; color: var(--text-head); }
+h3 { font-size: 11px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; }
+
+.tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tag-gold  { background: #3a2e12; color: var(--gold); }
+.tag-red   { background: #2e1212; color: var(--red); }
+.tag-blue  { background: #122030; color: var(--blue); }
+.tag-green { background: #122318; color: var(--green); }
+.tag-dim   { background: var(--bg-card); color: var(--text-dim); }
+
+hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
