@@ -9,6 +9,7 @@ import FinanceScreen from "./components/screens/FinanceScreen";
 import ProductsScreen from "./components/screens/ProductsScreen";
 import GatePrompt from "./components/notifications/GatePrompt";
 import { NotificationBell, NotificationPanel } from "./components/notifications/NotificationPanel";
+import DebugPanel from "./components/debug/DebugPanel";
 
 export default function App() {
   const { gameState, activeScreen, setScreen, startNewGame } = useGameStore();
@@ -26,6 +27,9 @@ export default function App() {
   // The gate handles win acknowledgement; the player can keep playing after winning.
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+
+      {/* Debug panel — dev only, Shift+D */}
+      {import.meta.env.DEV && <DebugPanel />}
 
       {/* Gate prompt — modal, intercepts End Turn */}
       <GatePrompt />
