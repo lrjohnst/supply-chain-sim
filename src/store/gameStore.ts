@@ -167,23 +167,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ];
     }
 
-    // Bankruptcy early warning notification
-    if (result.turnsToBankruptcy !== null &&
-        result.turnsToBankruptcy <= GameConfig.bankruptcy.warningThresholdTurns) {
-      newNotifs.push({
-        id: notifId(),
-        turn: gameState.turn - 1,
-        message: `⚠ At your current burn rate you will be unable to meet obligations in approximately ${result.turnsToBankruptcy} turn${result.turnsToBankruptcy === 1 ? "" : "s"}.`,
-        dismissed: false,
-        persistent: false,
-      });
-    }
-
     set((s) => ({
       gameState: { ...gameState },
       lastTickResult: result,
       lastBooks: books,
-      notifications: [...s.notifications, ...newNotifs],
+      // Purge any legacy bankruptcy warning notifications — the bottom bar
+      // now owns this indicator as a live reading. Identified by message prefix.
+      notifications: [
+        ...s.notifications.filter((n) => !n.message.startsWith("⚠ At your current burn rate")),
+        ...newNotifs,
+      ],
       gateQueue: newGateActions,
     }));
   },

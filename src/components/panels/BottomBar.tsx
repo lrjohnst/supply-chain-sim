@@ -1,6 +1,7 @@
 import { useGameStore, selectPlayerCorp, selectTurnLabel } from "../../store/gameStore";
 import { euros } from "../shared/fmt";
 import { corporationNetWorth } from "../../engine/utils";
+import { estimateTurnsToBankruptcy } from "../../engine/bankruptcy";
 import { GameConfig } from "../../config/gameConfig";
 
 export default function BottomBar() {
@@ -14,6 +15,9 @@ export default function BottomBar() {
   if (!gameState || !playerCorp) return null;
 
   const netWorth = corporationNetWorth(gameState, playerCorp.id);
+  const ttb = estimateTurnsToBankruptcy(gameState, playerCorp.id, GameConfig.bankruptcy.lookbackTurns);
+  const showBurnWarning = ttb !== null && ttb <= GameConfig.bankruptcy.warningThresholdTurns;
+
   const totalDebt = playerCorp.loanIds.reduce(
     (sum, id) => sum + gameState.loans[id].outstandingBalance,
     0
@@ -111,9 +115,22 @@ export default function BottomBar() {
         </div>
       )}
 
+      {/* Live burn-rate warning — always current, never stale */}
+      {showBurnWarning && (
+        <div style={{
+          marginLeft: "auto",
+          fontSize: 12,
+          fontWeight: 600,
+          color: ttb! <= 3 ? "var(--danger)" : "var(--warn)",
+          whiteSpace: "nowrap",
+        }}>
+          ⚠ ~{ttb} turn{ttb === 1 ? "" : "s"} to insolvency
+        </div>
+      )}
+
       <button
         className="primary"
-        style={{ marginLeft: "auto", padding: "8px 20px", fontSize: 13 }}
+        style={{ marginLeft: showBurnWarning ? 16 : "auto", padding: "8px 20px", fontSize: 13 }}
         disabled={gameState.phase === "lost"}
         onClick={endTurn}
       >
