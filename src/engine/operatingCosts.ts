@@ -10,6 +10,20 @@ export function firmOperatingCost(firm: Firm): number {
     .reduce((sum, inv) => sum + GameConfig.investments.operatingCostPerTurn[inv.type], 0);
 }
 
+/**
+ * Additional startup cost for any production lines currently commissioning.
+ * Cost per line = normal production_line operating cost × startupCostFraction.
+ * Direct P&L expense, not capitalised.
+ */
+export function firmStartupCost(firm: Firm): number {
+  const normalOpCost   = GameConfig.investments.operatingCostPerTurn["production_line"];
+  const fraction       = GameConfig.investments.startupCostFraction;
+  const startingUpCount = firm.productionLines.filter(
+    (l) => l.lineStatus === "starting_up"
+  ).length;
+  return startingUpCount * normalOpCost * fraction;
+}
+
 /** Deduct per-firm operating costs, training, and corporate marketing budget. */
 export function deductOperatingCosts(state: GameState): void {
   for (const corp of Object.values(state.corporations)) {
@@ -53,25 +67,44 @@ export function deductOperatingCosts(state: GameState): void {
 
     // Per-firm operating costs (scales with investments)
     for (const firmId of corp.firmIds) {
-      const firm = state.firms[firmId];
-      const cost = firmOperatingCost(firm);
-      if (cost <= 0) continue;
+      const firm        = state.firms[firmId];
+      const opCost      = firmOperatingCost(firm);
+      const startupCost = firmStartupCost(firm);
+      const totalCost   = opCost + startupCost;
+      if (totalCost <= 0) continue;
 
-      if (corp.isPlayer) requireCash(corp, cost, `Operating costs — ${firm.name}`);
-      else if (corp.cash < cost) { eliminateCorporation(state, corp.id); break; }
+      if (corp.isPlayer) requireCash(corp, totalCost, `Operating costs — ${firm.name}`);
+      else if (corp.cash < totalCost) { eliminateCorporation(state, corp.id); break; }
 
-      postTransaction({
-        state,
-        turn: state.turn,
-        firmId: firm.id,
-        corporationId: corp.id,
-        category: "operating_cost",
-        counterparty: "Operations",
-        product: null,
-        quantity: null,
-        unitPrice: null,
-        total: -cost,
-      });
+      if (opCost > 0) {
+        postTransaction({
+          state,
+          turn: state.turn,
+          firmId: firm.id,
+          corporationId: corp.id,
+          category: "operating_cost",
+          counterparty: "Operations",
+          product: null,
+          quantity: null,
+          unitPrice: null,
+          total: -opCost,
+        });
+      }
+
+      if (startupCost > 0) {
+        postTransaction({
+          state,
+          turn: state.turn,
+          firmId: firm.id,
+          corporationId: corp.id,
+          category: "operating_cost",
+          counterparty: "Commissioning",
+          product: null,
+          quantity: null,
+          unitPrice: null,
+          total: -startupCost,
+        });
+      }
     }
   }
 }

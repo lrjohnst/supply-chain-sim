@@ -152,11 +152,21 @@ export const GameConfig = {
     } satisfies Record<InvestmentType, number>,
 
     /**
-     * Turns a production line spends commissioning after build completes
-     * before it starts producing. No inputs consumed, no outputs produced.
+     * Turns a production line spends commissioning after recipe is configured.
+     * No inputs consumed, no outputs produced during this phase.
      * Later MVP: player innovations can reduce this value.
      */
     productionLineStartupTurns: 2,
+
+    /**
+     * Startup cost per turn = normal operating cost × startupCostFraction.
+     * Charged each turn the line is in the starting_up phase.
+     * Direct P&L expense, not capitalised.
+     * Post-MVP: investment costs may be capitalized and depreciated
+     * (afgeschreven) rather than expensed immediately. Startup costs
+     * remain direct expenses.
+     */
+    startupCostFraction: 0.3,
 
     // Operating cost per turn added by each completed investment.
     // Empty firm = zero overhead. Costs grow as the firm grows.

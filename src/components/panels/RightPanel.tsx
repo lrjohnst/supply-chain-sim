@@ -148,8 +148,8 @@ export default function RightPanel() {
 function FirmPanel({ firm }: { firm: Firm }) {
   const {
     gameState, buildInvestment, cancelInvestment,
-    configureProductionLine, markLineIntentionallyIdle,
-    toggleHarborAutoSource,
+    configureProductionLine, cancelPendingRecipeChange, markLineIntentionallyIdle,
+    markSectionIntentionallyIdle, toggleHarborAutoSource,
     addContract, setRetailPrice, setSellToCompetitors,
   } = useGameStore();
   const [invError, setInvError] = useState<string | null>(null);
@@ -228,10 +228,9 @@ function FirmPanel({ firm }: { firm: Firm }) {
                   {/* Production line recipe configuration */}
                   {lineSetup && inv.status === "complete" && (
                     <ProductionLineConfig
-                      firmId={firm.id}
-                      investmentId={inv.id}
                       lineSetup={lineSetup}
                       onConfigure={(recipe) => configureProductionLine(firm.id, inv.id, recipe)}
+                      onCancelPending={() => cancelPendingRecipeChange(firm.id, inv.id)}
                       onMarkIdle={() => markLineIntentionallyIdle(firm.id, inv.id)}
                     />
                   )}
@@ -341,6 +340,7 @@ function FirmPanel({ firm }: { firm: Firm }) {
           gameState={gameState}
           onToggle={(productId, enabled) => toggleHarborAutoSource(firm.id, productId, enabled)}
           onSetRetailPrice={(productId, price) => setRetailPrice(firm.id, productId, price)}
+          onMarkSectionIdle={(invId) => markSectionIntentionallyIdle(firm.id, invId)}
         />
       ) : (
         <HarborSourcingSection
@@ -630,15 +630,15 @@ const RECIPE_OPTIONS: { key: RecipeKey; label: string }[] = [
 ];
 
 function ProductionLineConfig({
-  firmId, investmentId, lineSetup, onConfigure, onMarkIdle,
+  lineSetup, onConfigure, onCancelPending, onMarkIdle,
 }: {
-  firmId: string;
-  investmentId: string;
   lineSetup: import("../../types").ProductionLineSetup;
   onConfigure: (recipe: RecipeKey) => void;
+  onCancelPending: () => void;
   onMarkIdle: () => void;
 }) {
-  const [selected, setSelected] = useState<RecipeKey | "">(lineSetup.recipe ?? "");
+  const [showPicker, setShowPicker] = useState(false);
+  const [selected, setSelected]     = useState<RecipeKey | "">(lineSetup.recipe ?? "");
 
   if (lineSetup.lineStatus === "starting_up") {
     return (
@@ -648,23 +648,44 @@ function ProductionLineConfig({
     );
   }
 
-  if (lineSetup.lineStatus === "active" && lineSetup.recipe) {
+  if (lineSetup.lineStatus === "active" && !showPicker) {
     return (
-      <div style={{ fontSize: 10, color: "var(--text-dim)", paddingLeft: 4, marginTop: 2, display: "flex", gap: 8, alignItems: "center" }}>
-        <span>Recipe: {lineSetup.recipe.replace(/_/g, " ")}</span>
-        <button style={{ fontSize: 10, padding: "1px 6px" }} onClick={() => {
-          setSelected(lineSetup.recipe ?? "");
-        }}>Change</button>
+      <div style={{ fontSize: 10, color: "var(--text-dim)", paddingLeft: 4, marginTop: 2 }}>
+        {lineSetup.pendingRecipe ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <span>
+              Currently: <strong>{lineSetup.recipe?.replace(/_/g, " ")}</strong>
+              {" → "}Changing to: <strong style={{ color: "var(--warn)" }}>{lineSetup.pendingRecipe.replace(/_/g, " ")}</strong> next turn
+            </span>
+            <button style={{ fontSize: 10, padding: "1px 6px", color: "var(--danger)", alignSelf: "flex-start" }} onClick={onCancelPending}>
+              Cancel change
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span>Recipe: {lineSetup.recipe?.replace(/_/g, " ")}</span>
+            <button style={{ fontSize: 10, padding: "1px 6px" }} onClick={() => { setSelected(lineSetup.recipe ?? ""); setShowPicker(true); }}>
+              Change
+            </button>
+          </div>
+        )}
       </div>
     );
   }
 
-  // unconfigured or reconfiguring
+  // unconfigured, starting_up (after reconfigure), or recipe picker open for active line
   return (
     <div style={{ marginTop: 4, paddingLeft: 4, display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontSize: 10, color: lineSetup.intentionallyIdle ? "var(--text-dim)" : "var(--warn)" }}>
-        {lineSetup.intentionallyIdle ? "Intentionally idle" : "⚠ Unconfigured — select a recipe"}
-      </div>
+      {lineSetup.lineStatus === "unconfigured" && (
+        <div style={{ fontSize: 10, color: lineSetup.intentionallyIdle ? "var(--text-dim)" : "var(--warn)" }}>
+          {lineSetup.intentionallyIdle ? "Intentionally idle" : "⚠ Unconfigured — select a recipe"}
+        </div>
+      )}
+      {showPicker && (
+        <div style={{ fontSize: 10, color: "var(--text-dim)" }}>
+          Queued change (takes effect next turn):
+        </div>
+      )}
       <div style={{ display: "flex", gap: 4 }}>
         <select
           value={selected}
@@ -679,12 +700,15 @@ function ProductionLineConfig({
         <button
           style={{ fontSize: 10, padding: "2px 8px" }}
           disabled={!selected}
-          onClick={() => { if (selected) onConfigure(selected as RecipeKey); }}
+          onClick={() => { if (selected) { onConfigure(selected as RecipeKey); setShowPicker(false); } }}
         >
-          Start
+          {lineSetup.lineStatus === "active" ? "Queue" : "Start"}
         </button>
+        {showPicker && (
+          <button style={{ fontSize: 10, padding: "2px 6px" }} onClick={() => setShowPicker(false)}>✕</button>
+        )}
       </div>
-      {!lineSetup.intentionallyIdle && (
+      {lineSetup.lineStatus === "unconfigured" && !lineSetup.intentionallyIdle && (
         <button style={{ fontSize: 10, padding: "1px 6px", color: "var(--text-dim)" }} onClick={onMarkIdle}>
           Mark as intentionally idle
         </button>
@@ -697,13 +721,22 @@ function ProductionLineConfig({
 // Store harbor auto-source section (Fix 7)
 // ------------------------------------------------------------------
 
+const SECTION_FOR_PRODUCT: Partial<Record<ProductId, string>> = {
+  chicken:              "grocery_section",
+  chicken_soup:         "grocery_section",
+  ice_cream_strawberry: "grocery_section",
+  laptop_branded:       "electronics_section",
+  printer_branded:      "electronics_section",
+};
+
 function StoreHarborSourceSection({
-  firm, gameState, onToggle, onSetRetailPrice,
+  firm, gameState, onToggle, onSetRetailPrice, onMarkSectionIdle,
 }: {
   firm: Firm;
   gameState: import("../../types").GameState;
   onToggle: (productId: ProductId, enabled: boolean) => void;
   onSetRetailPrice: (productId: ProductId, price: number) => void;
+  onMarkSectionIdle: (invId: string) => void;
 }) {
   const sellable    = getStoreSellableProducts(firm);
   const harborItems = sellable.filter((p) => isSoldByHarbor(p));
@@ -727,6 +760,12 @@ function StoreHarborSourceSection({
           const estDemand   = city ? estimatedDemand(city.population, productId, retailPrice) : 0;
           const estCostPerTurn = estDemand * spotPrice;
 
+          // Find the section investment that covers this product (for idle marking)
+          const sectionType = SECTION_FOR_PRODUCT[productId];
+          const sectionInv  = sectionType
+            ? firm.investments.find((i) => i.type === sectionType && i.status === "complete")
+            : undefined;
+
           return (
             <div key={productId} style={{ marginBottom: 12, borderLeft: `2px solid ${enabled ? "var(--accent)" : "var(--border)"}`, paddingLeft: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -740,6 +779,14 @@ function StoreHarborSourceSection({
                   {enabled ? "Auto-buying" : "Off"}
                 </label>
               </div>
+              {sectionInv && !sectionInv.intentionallyIdle && !enabled && (
+                <button
+                  style={{ fontSize: 10, padding: "1px 6px", color: "var(--text-dim)", marginBottom: 4 }}
+                  onClick={() => onMarkSectionIdle(sectionInv.id)}
+                >
+                  Mark section as intentionally idle
+                </button>
+              )}
               <div style={{ fontSize: 11, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 2 }}>
                 <span>Spot price: <strong style={{ color: "var(--text-head)" }}>{euros(spotPrice)}/u</strong></span>
                 <span>Est. demand: <strong style={{ color: "var(--text-head)" }}>{qty(estDemand)} units/turn</strong></span>

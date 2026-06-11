@@ -8,6 +8,8 @@ import {
   cancelInvestment as engineCancelInvestment,
   configureProductionLine as engineConfigureLine,
   markLineIntentionallyIdle as engineMarkLineIdle,
+  cancelPendingRecipeChange as engineCancelPending,
+  markSectionIntentionallyIdle as engineMarkSectionIdle,
 } from "../engine/investments";
 import { takeLoan } from "../engine/loans";
 import { createContract } from "../engine/contracts";
@@ -50,7 +52,9 @@ interface GameStore {
   buildInvestment: (firmId: string, type: InvestmentType) => string | null;
   cancelInvestment: (firmId: string, investmentId: string) => string | null;
   configureProductionLine: (firmId: string, investmentId: string, recipe: RecipeKey) => string | null;
+  cancelPendingRecipeChange: (firmId: string, investmentId: string) => string | null;
   markLineIntentionallyIdle: (firmId: string, investmentId: string) => string | null;
+  markSectionIntentionallyIdle: (firmId: string, investmentId: string) => string | null;
   toggleHarborAutoSource: (firmId: string, productId: ProductId, enabled: boolean) => void;
   buildFirm: (cityNodeId: string, type: "farm" | "factory" | "store", name: string) => string | null;
   setRetailPrice: (firmId: string, product: ProductId, price: number) => void;
@@ -187,11 +191,30 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ];
     }
 
-    // Unconfigured production line gate
-    // Fires once per unconfigured line per turn until configured or marked idle.
-    // Uses stable gate ID so duplicates are not added across turns.
-    // Note: store section gate (grocery_section, electronics_section, etc.) is deferred — see TODO.
-    // TODO Post-MVP: add gate for store sections needing sourcing + price configuration.
+    // ----------------------------------------------------------------
+    // Unconfigured investment gates
+    // Each fires once per unconfigured investment per turn until
+    // configured or marked intentionally idle. Stable gate IDs prevent
+    // duplicate entries across turns.
+    // ----------------------------------------------------------------
+
+    // Store sections with defined products that can be configured.
+    // Other sections (cosmetics, hardware, clothing, pharmacy) have no MVP
+    // products yet and are excluded — their gate is deferred.
+    const STORE_SECTION_PRODUCTS: Partial<Record<string, string[]>> = {
+      grocery_section:     ["chicken", "chicken_soup", "ice_cream_strawberry"],
+      electronics_section: ["laptop_branded", "printer_branded"],
+    };
+
+    const isSectionConfigured = (firm: import("../types").Firm, invType: string): boolean => {
+      const products = STORE_SECTION_PRODUCTS[invType] ?? [];
+      if (products.length === 0) return true; // no products to configure
+      return products.some((p) =>
+        firm.harborAutoSource[p as import("../types").ProductId] === true ||
+        firm.retailPrices[p as import("../types").ProductId] !== undefined
+      );
+    };
+
     const playerCorp2 = Object.values(gameState.corporations).find((c) => c.isPlayer);
     if (playerCorp2) {
       for (const firmId of playerCorp2.firmIds) {
@@ -236,6 +259,53 @@ export const useGameStore = create<GameStore>((set, get) => ({
               },
             ],
           });
+        }
+
+        // Store section gates
+        if (firm.type === "store") {
+          for (const inv of firm.investments) {
+            if (inv.status !== "complete") continue;
+            if (!STORE_SECTION_PRODUCTS[inv.type]) continue; // section not gated
+            if (inv.intentionallyIdle) continue;
+            if (isSectionConfigured(firm, inv.type)) continue;
+
+            const sectionGateId = `gate-section-${inv.id}`;
+            if (newGateActions.some((g) => g.id === sectionGateId)) continue;
+
+            const cFirmId   = firmId;
+            const cInvId    = inv.id;
+            const cFirmName = firm.name;
+            const sectionLabel = inv.type.replace(/_/g, " ");
+
+            newGateActions.push({
+              id: sectionGateId,
+              message: `Your ${cFirmName} has an unconfigured ${sectionLabel}. Would you like to set up sourcing and pricing now or leave it idle?`,
+              options: [
+                {
+                  label: "Configure Now",
+                  handler: () => {
+                    get().selectFirm(cFirmId);
+                    get().resolveGateAction(sectionGateId, "Configure Now");
+                  },
+                  style: "primary" as const,
+                },
+                {
+                  label: "Leave Idle",
+                  handler: () => get().resolveGateAction(sectionGateId, "Leave Idle"),
+                  style: "default" as const,
+                },
+                {
+                  label: "Mark as Intentionally Idle",
+                  handler: () => {
+                    const { gameState: gs } = get();
+                    if (gs) { engineMarkSectionIdle(gs, cFirmId, cInvId); set({ gameState: { ...gs } }); }
+                    get().resolveGateAction(sectionGateId, "Mark as Intentionally Idle");
+                  },
+                  style: "default" as const,
+                },
+              ],
+            });
+          }
         }
       }
     }
@@ -290,10 +360,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return err;
   },
 
+  cancelPendingRecipeChange: (firmId, investmentId) => {
+    const { gameState } = get();
+    if (!gameState) return "No active game.";
+    const err = engineCancelPending(gameState, firmId, investmentId);
+    if (!err) set({ gameState: { ...gameState } });
+    return err;
+  },
+
   markLineIntentionallyIdle: (firmId, investmentId) => {
     const { gameState } = get();
     if (!gameState) return "No active game.";
     const err = engineMarkLineIdle(gameState, firmId, investmentId);
+    if (!err) set({ gameState: { ...gameState } });
+    return err;
+  },
+
+  markSectionIntentionallyIdle: (firmId, investmentId) => {
+    const { gameState } = get();
+    if (!gameState) return "No active game.";
+    const err = engineMarkSectionIdle(gameState, firmId, investmentId);
     if (!err) set({ gameState: { ...gameState } });
     return err;
   },

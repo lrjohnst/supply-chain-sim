@@ -144,6 +144,12 @@ export interface Investment {
   status: InvestmentStatus;
   turnsRemaining: number;
   costPaid: number;
+  /**
+   * When true, the End Turn gate for this unconfigured store section is
+   * permanently suppressed until the player configures sourcing/pricing.
+   * Only relevant for store section investments.
+   */
+  intentionallyIdle: boolean;
 }
 
 // ============================================================
@@ -180,6 +186,13 @@ export interface ProductionLineSetup {
   progress: number;
   /** When true, the End Turn gate for this unconfigured line is permanently suppressed. */
   intentionallyIdle: boolean;
+  /**
+   * Recipe change queued by the player during the current turn.
+   * Applied at the start of the next tick (before production), so the
+   * current turn's production completes with the old recipe first.
+   * null = no pending change.
+   */
+  pendingRecipe: RecipeKey | null;
 }
 
 // ============================================================

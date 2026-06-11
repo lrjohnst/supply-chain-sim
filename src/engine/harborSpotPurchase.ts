@@ -13,7 +13,7 @@
 import type { GameState, ProductId } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { getBasePrice } from "./harbor";
-import { estimatedDemand } from "./retail";
+import { computeFullDeterministicDemand } from "./retail";
 import { addToInventory } from "./utils";
 import { postTransaction } from "./ledger";
 import { requireCash, eliminateCorporation } from "./bankruptcy";
@@ -74,9 +74,11 @@ export function runHarborSpotPurchases(state: GameState): void {
       // Spot price = harbor price + premium
       const spotPrice   = +(harborPrice * (1 + GameConfig.spotPurchasePremium)).toFixed(4);
 
-      // Quantity = estimated demand at current retail price
+      // Quantity = full deterministic demand (all multipliers, no noise term).
+      // Actual sold quantity will differ slightly due to retail noise — known simplification.
+      // Post-MVP: a proper inventory buffer system will decouple purchase from demand estimate.
       const retailPrice = firm.retailPrices[productId] ?? GameConfig.retailBenchmarkPrices[productId] ?? 0;
-      const qty         = estimatedDemand(city.population, productId, retailPrice);
+      const qty         = computeFullDeterministicDemand(state, firm, productId, retailPrice);
       if (qty <= 0) continue;
 
       const total = qty * spotPrice;

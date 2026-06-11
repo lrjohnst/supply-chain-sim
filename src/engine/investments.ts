@@ -91,6 +91,7 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
             firm.productionLines.push({
               investmentId:          inv.id,
               recipe:                null,
+              pendingRecipe:         null,
               sourceType:            "harbor",
               lineStatus:            "unconfigured",
               startupTurnsRemaining: 0,
@@ -102,8 +103,19 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
       }
     }
 
-    // ---- Production line startup phase advancement ----
+    // ---- Production line pending recipe changes + startup advancement ----
     for (const line of firm.productionLines) {
+      // Apply queued recipe change before production runs this tick.
+      // Current turn's production already ran with the old recipe (last tick).
+      if (line.pendingRecipe !== null) {
+        line.recipe                = line.pendingRecipe;
+        line.pendingRecipe         = null;
+        line.lineStatus            = "starting_up";
+        line.startupTurnsRemaining = GameConfig.investments.productionLineStartupTurns;
+        line.progress              = 0;
+        line.intentionallyIdle     = false;
+      }
+
       if (line.lineStatus === "starting_up") {
         line.startupTurnsRemaining -= 1;
         if (line.startupTurnsRemaining <= 0) {
@@ -156,11 +168,12 @@ export function startInvestment(
   }
 
   firm.investments.push({
-    id:             generateId(),
+    id:               generateId(),
     type,
-    status:         "queued",
-    turnsRemaining: GameConfig.investments.buildTurns[type],
-    costPaid:       0,
+    status:           "queued",
+    turnsRemaining:   GameConfig.investments.buildTurns[type],
+    costPaid:         0,
+    intentionallyIdle: false,
   });
 
   return null;
@@ -229,6 +242,7 @@ export function configureProductionLine(
     line = {
       investmentId,
       recipe:                null,
+      pendingRecipe:         null,
       sourceType:            "harbor",
       lineStatus:            "unconfigured",
       startupTurnsRemaining: 0,
@@ -238,12 +252,55 @@ export function configureProductionLine(
     firm.productionLines.push(line);
   }
 
-  line.recipe                = recipe;
-  line.lineStatus            = "starting_up";
-  line.startupTurnsRemaining = GameConfig.investments.productionLineStartupTurns;
-  line.progress              = 0; // reset batch progress on (re)configuration
-  line.intentionallyIdle     = false;
+  if (line.lineStatus === "active") {
+    // Active line: queue the change. Current recipe keeps running this turn.
+    // pendingRecipe is applied at the start of the next tick in advanceInvestments.
+    line.pendingRecipe = recipe;
+  } else {
+    // Unconfigured or starting_up: apply immediately, restart startup.
+    line.recipe                = recipe;
+    line.pendingRecipe         = null;
+    line.lineStatus            = "starting_up";
+    line.startupTurnsRemaining = GameConfig.investments.productionLineStartupTurns;
+    line.progress              = 0;
+    line.intentionallyIdle     = false;
+  }
 
+  return null;
+}
+
+/**
+ * Cancel a queued recipe change on an active production line.
+ * The current recipe continues uninterrupted.
+ */
+export function cancelPendingRecipeChange(
+  state: GameState,
+  firmId: string,
+  investmentId: string
+): string | null {
+  const firm = state.firms[firmId];
+  if (!firm) return "Firm not found.";
+  const line = firm.productionLines.find((l) => l.investmentId === investmentId);
+  if (!line) return "Production line not found.";
+  if (line.pendingRecipe === null) return "No pending recipe change to cancel.";
+  line.pendingRecipe = null;
+  return null;
+}
+
+/**
+ * Mark a completed store section investment as intentionally idle.
+ * Suppresses the unconfigured gate permanently until sourcing/pricing is set.
+ */
+export function markSectionIntentionallyIdle(
+  state: GameState,
+  firmId: string,
+  investmentId: string
+): string | null {
+  const firm = state.firms[firmId];
+  if (!firm) return "Firm not found.";
+  const inv = firm.investments.find((i) => i.id === investmentId);
+  if (!inv) return "Investment not found.";
+  inv.intentionallyIdle = true;
   return null;
 }
 

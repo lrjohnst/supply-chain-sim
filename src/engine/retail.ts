@@ -1,4 +1,4 @@
-import type { GameState, ProductId } from "../types";
+import type { GameState, ProductId, Firm } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { inventoryQuantity, removeFromInventory, clamp, sampleNormal } from "./utils";
 import { postTransaction } from "./ledger";
@@ -229,4 +229,66 @@ export function estimatedDemand(
   const priceDeltaPct = ((retailPrice - benchmark) / benchmark) * 100;
   const elasticityMultiplier = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
   return Math.floor(base * elasticityMultiplier);
+}
+
+/**
+ * Full deterministic demand for a firm/product combination this turn.
+ * Includes all multipliers (ramp, elasticity, marketing, barcode, recession)
+ * but excludes the per-turn noise term.
+ *
+ * Used by harborSpotPurchase to determine exactly how much to buy.
+ * The actual sold quantity in runRetailSales will differ slightly due to
+ * the noise term — this is a known simplification. Post-MVP: a proper
+ * inventory buffer system will decouple purchase quantity from demand estimate.
+ *
+ * Recession displacement uses state.recessionSeverity directly (no per-turn
+ * severity noise wobble), since that noise is only drawn inside runRetailSales.
+ */
+export function computeFullDeterministicDemand(
+  state: GameState,
+  firm: Firm,
+  product: ProductId,
+  retailPrice: number
+): number {
+  const cityNode = state.cityNodes[firm.cityNodeId];
+  if (!cityNode) return 0;
+
+  const base = computeBaseDemand(cityNode.population, product);
+  if (base <= 0) return 0;
+
+  const benchmark = GameConfig.retailBenchmarkPrices[product];
+  if (!benchmark || benchmark <= 0) return 0;
+
+  const corp = state.corporations[firm.corporationId];
+
+  // Elasticity
+  const elasticity      = GameConfig.retailElasticity[product] ?? 0;
+  const priceDeltaPct   = ((retailPrice - benchmark) / benchmark) * 100;
+  const elasticityMult  = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
+
+  // Sales ramp
+  const rampTurns   = getRampTurns(product);
+  const currentRamp = firm.salesRampTurns[product] ?? 0;
+  const rampFraction = rampTurns > 0
+    ? Math.min(1, GameConfig.salesRamp.rampStartFraction +
+        (1 - GameConfig.salesRamp.rampStartFraction) * (currentRamp / rampTurns))
+    : 1;
+
+  // Marketing
+  const marketingMult = computeMarketingMultiplier(corp.marketingBudgetPerTurn);
+
+  // Barcode
+  const barcodeMult = state.barcodeAvailable &&
+    firm.investments.some((i) => i.type === "barcode_scanning" && i.status === "complete")
+    ? 1.05 : 1.0;
+
+  // Recession displacement (deterministic severity, no noise wobble)
+  const recessionDisplacement = state.recessionTurnsRemaining > 0
+    ? base * (state.recessionSeverity - 1)
+    : 0;
+
+  const full = base * elasticityMult * rampFraction * marketingMult * barcodeMult
+             + recessionDisplacement;
+
+  return Math.max(0, Math.floor(full));
 }
