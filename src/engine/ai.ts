@@ -122,7 +122,7 @@ function investInExistingFirms(state: GameState, corpId: string): void {
     // Prioritise grocery sections for stores that don't have one
     if (
       firm.type === "store" &&
-      !firm.investments.some((i) => i.type === "grocery_section" && i.status !== "not_built")
+      !firm.investments.some((i) => i.type === "grocery_section")
     ) {
       const err = startInvestment(state, firmId, "grocery_section");
       if (!err) return;
@@ -131,7 +131,7 @@ function investInExistingFirms(state: GameState, corpId: string): void {
     // Prioritise production lines for factories
     if (
       firm.type === "factory" &&
-      !firm.investments.some((i) => i.type === "production_line" && i.status !== "not_built")
+      !firm.investments.some((i) => i.type === "production_line")
     ) {
       const err = startInvestment(state, firmId, "production_line");
       if (!err) return;

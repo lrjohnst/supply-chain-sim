@@ -73,12 +73,19 @@ export function estimateTurnsToBankruptcy(
   const corp = state.corporations[corporationId];
   if (!corp) return null;
 
-  // Sum net cash flow per turn over the lookback window
+  // Sum operational cash flow per turn over the lookback window.
+  // Investment costs are excluded — they are one-off asset purchases, not
+  // recurring expenses, and would otherwise inflate the apparent burn rate
+  // for several turns after a capital expenditure.
   const turnFlows: number[] = [];
 
   for (let t = currentTurn - lookbackTurns; t < currentTurn; t++) {
     const flow = state.transactions
-      .filter((tx) => tx.corporationId === corporationId && tx.turn === t)
+      .filter((tx) =>
+        tx.corporationId === corporationId &&
+        tx.turn === t &&
+        tx.category !== "investment_cost"
+      )
       .reduce((sum, tx) => sum + tx.total, 0);
     turnFlows.push(flow);
   }

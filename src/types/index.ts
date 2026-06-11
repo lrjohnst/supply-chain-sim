@@ -135,7 +135,7 @@ export type InvestmentType =
   | "warehouse_capacity"
   | "training_store";
 
-export type InvestmentStatus = "not_built" | "in_progress" | "complete";
+export type InvestmentStatus = "queued" | "in_progress" | "starting_up" | "complete";
 
 export interface Investment {
   id: EntityId;

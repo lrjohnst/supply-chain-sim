@@ -2,7 +2,7 @@ import type { GameState, MacroEvent } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { firePendingEvents, generateUpcomingEvents } from "./macroEvents";
 import { tickHarborPrices } from "./harbor";
-import { advanceInvestments } from "./investments";
+import { advanceInvestments, type PausedInvestmentInfo } from "./investments";
 import { runProduction } from "./production";
 import { executeContracts } from "./contracts";
 import { evaluateTenders } from "./tenders";
@@ -27,6 +27,8 @@ export interface TickResult {
   lossReason: LossReason | "lost_bankruptcy" | null;
   /** Estimated turns before bankruptcy at current burn rate. Null if burn is positive. */
   turnsToBankruptcy: number | null;
+  /** Player investments that paused this turn due to insufficient funds. */
+  pausedInvestments: PausedInvestmentInfo[];
 }
 
 /**
@@ -59,7 +61,7 @@ export function tick(state: GameState): TickResult {
   // Step 2: recalculate harbor prices with noise + shock decay
   const harborData = tickHarborPrices(state);
 
-  advanceInvestments(state);
+  const pausedInvestments = advanceInvestments(state);
   runProduction(state);
 
   // Steps that may throw BankruptcyError
@@ -82,6 +84,7 @@ export function tick(state: GameState): TickResult {
         bankruptcyReason: e.reason,
         lossReason: "lost_bankruptcy",
         turnsToBankruptcy: null,
+        pausedInvestments,
       };
     }
     throw e;
@@ -110,6 +113,7 @@ export function tick(state: GameState): TickResult {
       bankruptcyReason: null,
       lossReason: result.reason,
       turnsToBankruptcy,
+      pausedInvestments,
     };
   }
 
@@ -132,5 +136,6 @@ export function tick(state: GameState): TickResult {
     bankruptcyReason: null,
     lossReason: null,
     turnsToBankruptcy,
+    pausedInvestments,
   };
 }

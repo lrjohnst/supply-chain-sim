@@ -1,4 +1,4 @@
-import type { InvestmentType, ProductId, RecipeKey } from "../types";
+import type { InvestmentType, FirmType, ProductId, RecipeKey } from "../types";
 
 // ============================================================
 // All gameplay parameters live here. No numeric constants
@@ -151,6 +151,13 @@ export const GameConfig = {
       training_store: 1,
     } satisfies Record<InvestmentType, number>,
 
+    /**
+     * Turns a production line spends commissioning after build completes
+     * before it starts producing. No inputs consumed, no outputs produced.
+     * Later MVP: player innovations can reduce this value.
+     */
+    productionLineStartupTurns: 2,
+
     // Operating cost per turn added by each completed investment.
     // Empty firm = zero overhead. Costs grow as the firm grows.
     operatingCostPerTurn: {
@@ -182,6 +189,29 @@ export const GameConfig = {
   },
 
   firmInvestmentSlotLimit: 8,
+
+  // ----------------------------------------------------------
+  // Valid investment types per firm type
+  // Used by startInvestment guard and the investment UI.
+  // mine: post-MVP placeholder — no valid investments yet.
+  // ----------------------------------------------------------
+  validInvestments: {
+    farm: [
+      "crop_fields", "livestock_facilities", "irrigation_systems", "cold_storage",
+      "processing_yard_farm", "seasonal_planning_unit", "training_farm",
+    ],
+    factory: [
+      "production_line", "storage_facilities", "packaging_lines", "quality_lab",
+      "logistics_hub", "processing_unit", "branding_facility", "training_factory",
+      "barcode_scanning",
+    ],
+    store: [
+      "grocery_section", "electronics_section", "cosmetics_section", "hardware_section",
+      "clothing_section", "pharmacy_section", "warehouse_capacity", "training_store",
+      "barcode_scanning",
+    ],
+    mine: [],
+  } satisfies Record<FirmType, InvestmentType[]>,
 
   // ----------------------------------------------------------
   // Harbor — base prices (numeric balancing values)
@@ -432,7 +462,7 @@ export const GameConfig = {
   // ----------------------------------------------------------
   bankruptcy: {
     warningThresholdTurns: 10,  // warn if < 10 turns of cash remain at current burn rate
-    lookbackTurns: 4,           // turns of history used to estimate average burn rate
+    lookbackTurns: 10,          // turns of history used to estimate average burn rate
   },
 
   // ----------------------------------------------------------

@@ -144,7 +144,7 @@ export default function RightPanel() {
 // ------------------------------------------------------------------
 
 function FirmPanel({ firm }: { firm: Firm }) {
-  const { gameState, buildInvestment, addContract, setRetailPrice, setSellToCompetitors } = useGameStore();
+  const { gameState, buildInvestment, cancelInvestment, addContract, setRetailPrice, setSellToCompetitors } = useGameStore();
   const [invError, setInvError] = useState<string | null>(null);
   const [contractError, setContractError] = useState<string | null>(null);
 
@@ -152,15 +152,14 @@ function FirmPanel({ firm }: { firm: Firm }) {
 
   const investmentsByType = firm.investments.reduce<Record<string, number>>(
     (acc, inv) => {
-      if (inv.status !== "not_built") acc[inv.type] = (acc[inv.type] ?? 0) + 1;
+      acc[inv.type] = (acc[inv.type] ?? 0) + 1;
       return acc;
     },
     {}
   );
 
   const availableInvestments = getAvailableInvestments(firm.type, gameState.barcodeAvailable);
-  const activeSlots = firm.investments.filter((i) => i.status !== "not_built").length;
-  const slotsLeft = GameConfig.firmInvestmentSlotLimit - activeSlots;
+  const slotsLeft = GameConfig.firmInvestmentSlotLimit - firm.investments.length;
 
   function handleInvest(type: InvestmentType) {
     const err = buildInvestment(firm.id, type);
@@ -182,24 +181,34 @@ function FirmPanel({ firm }: { firm: Firm }) {
       <hr />
       <div style={sectionStyle}>
         <Row label="Quality" value={pct(firm.quality)} />
-        <Row label="Investment slots" value={`${activeSlots} / ${GameConfig.firmInvestmentSlotLimit} used`} />
+        <Row label="Investment slots" value={`${firm.investments.length} / ${GameConfig.firmInvestmentSlotLimit} used`} />
       </div>
 
-      {firm.investments.filter((i) => i.status !== "not_built").length > 0 && (
+      {firm.investments.length > 0 && (
         <>
           <hr />
           <h3 style={{ padding: "0 16px" }}>Investments</h3>
           <div style={{ padding: "4px 16px 8px" }}>
-            {firm.investments
-              .filter((i) => i.status !== "not_built")
-              .map((inv) => (
-                <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-                  <span style={{ color: "var(--text)" }}>{inv.type.replace(/_/g, " ")}</span>
-                  <span className={`tag tag-${inv.status === "complete" ? "green" : "dim"}`}>
-                    {inv.status === "in_progress" ? `${inv.turnsRemaining}t` : "✓"}
-                  </span>
-                </div>
-              ))}
+            {firm.investments.map((inv) => (
+              <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", gap: 6 }}>
+                <span style={{ color: "var(--text)", flex: 1, fontSize: 11 }}>{inv.type.replace(/_/g, " ")}</span>
+                <span className={`tag tag-${inv.status === "complete" ? "green" : inv.status === "starting_up" ? "gold" : "dim"}`}
+                  style={{ flexShrink: 0 }}>
+                  {inv.status === "complete"    ? "✓" :
+                   inv.status === "starting_up" ? `startup ${inv.turnsRemaining}t` :
+                   inv.status === "in_progress" ? `building ${inv.turnsRemaining}t` :
+                   "queued"}
+                </span>
+                {(inv.status === "queued" || inv.status === "in_progress") && (
+                  <button
+                    style={{ fontSize: 10, padding: "1px 6px", color: "var(--danger)", flexShrink: 0 }}
+                    onClick={() => cancelInvestment(firm.id, inv.id)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         </>
       )}
@@ -533,41 +542,41 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+const INVESTMENT_LABELS: Record<InvestmentType, string> = {
+  crop_fields:           "Crop fields",
+  livestock_facilities:  "Livestock facilities",
+  irrigation_systems:    "Irrigation systems",
+  cold_storage:          "Cold storage",
+  processing_yard_farm:  "Processing yard",
+  seasonal_planning_unit:"Seasonal planning unit",
+  training_farm:         "Training program",
+  production_line:       "Production line",
+  storage_facilities:    "Storage facilities",
+  packaging_lines:       "Packaging lines",
+  quality_lab:           "Quality lab",
+  logistics_hub:         "Logistics hub",
+  processing_unit:       "Processing unit",
+  branding_facility:     "Branding facility",
+  training_factory:      "Training program",
+  barcode_scanning:      "Barcode scanning",
+  grocery_section:       "Grocery section",
+  cosmetics_section:     "Cosmetics section",
+  hardware_section:      "Hardware section",
+  electronics_section:   "Electronics section",
+  clothing_section:      "Clothing section",
+  pharmacy_section:      "Pharmacy section",
+  warehouse_capacity:    "Warehouse capacity",
+  training_store:        "Training program",
+};
+
 function getAvailableInvestments(
-  firmType: "farm" | "factory" | "store",
+  firmType: FirmType,
   barcodeAvailable: boolean
 ): { type: InvestmentType; label: string }[] {
-  if (firmType === "farm") return [
-    { type: "crop_fields", label: "Crop fields" },
-    { type: "livestock_facilities", label: "Livestock facilities" },
-    { type: "irrigation_systems", label: "Irrigation systems" },
-    { type: "cold_storage", label: "Cold storage" },
-    { type: "processing_yard_farm", label: "Processing yard" },
-    { type: "seasonal_planning_unit", label: "Seasonal planning unit" },
-    { type: "training_farm", label: "Training program" },
-  ];
-  if (firmType === "factory") return [
-    { type: "production_line", label: "Production line" },
-    { type: "storage_facilities", label: "Storage facilities" },
-    { type: "packaging_lines", label: "Packaging lines" },
-    { type: "quality_lab", label: "Quality lab" },
-    { type: "logistics_hub", label: "Logistics hub" },
-    { type: "processing_unit", label: "Processing unit" },
-    { type: "branding_facility", label: "Branding facility" },
-    { type: "training_factory", label: "Training program" },
-    ...(barcodeAvailable ? [{ type: "barcode_scanning" as InvestmentType, label: "Barcode scanning" }] : []),
-  ];
-  return [
-    { type: "grocery_section", label: "Grocery section" },
-    { type: "electronics_section", label: "Electronics section" },
-    { type: "cosmetics_section", label: "Cosmetics section" },
-    { type: "hardware_section", label: "Hardware section" },
-    { type: "clothing_section", label: "Clothing section" },
-    { type: "pharmacy_section", label: "Pharmacy section" },
-    { type: "warehouse_capacity", label: "Warehouse capacity" },
-    { type: "training_store", label: "Training program" },
-    ...(barcodeAvailable ? [{ type: "barcode_scanning" as InvestmentType, label: "Barcode scanning" }] : []),
-  ];
+  const valid = (GameConfig.validInvestments[firmType] as InvestmentType[]);
+  return valid
+    .filter((type) => type !== "barcode_scanning" || barcodeAvailable)
+    .map((type) => ({ type, label: INVESTMENT_LABELS[type] ?? type.replace(/_/g, " ") }));
 }
 
 const panelStyle: React.CSSProperties = {

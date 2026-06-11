@@ -3,7 +3,7 @@ import type { GameState, CorporateBooks, ProductId } from "../types";
 import { newGame, makeFirm } from "../engine/newGame";
 import { tick, type TickResult } from "../engine/tick";
 import { computeCorporateBooks } from "../engine/books";
-import { startInvestment } from "../engine/investments";
+import { startInvestment, cancelInvestment as engineCancelInvestment } from "../engine/investments";
 import { takeLoan } from "../engine/loans";
 import { createContract } from "../engine/contracts";
 import { submitTenderBid } from "../engine/tenders";
@@ -43,6 +43,7 @@ interface GameStore {
 
   // Actions — firm management
   buildInvestment: (firmId: string, type: InvestmentType) => string | null;
+  cancelInvestment: (firmId: string, investmentId: string) => string | null;
   buildFirm: (cityNodeId: string, type: "farm" | "factory" | "store", name: string) => string | null;
   setRetailPrice: (firmId: string, product: ProductId, price: number) => void;
   setSellToCompetitors: (firmId: string, enabled: boolean) => void;
@@ -127,6 +128,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
       persistent: false,
     }));
 
+    // Construction pause notifications
+    for (const p of result.pausedInvestments) {
+      newNotifs.push({
+        id: notifId(),
+        turn: gameState.turn - 1,
+        message: `Construction paused at ${p.firmName}: insufficient funds for ${p.investmentType.replace(/_/g, " ")}. Payment will resume next turn if funds are available.`,
+        dismissed: false,
+        persistent: false,
+      });
+    }
+
     // Win transition: phase just became "won"
     let newGateActions: GateAction[] = [...get().gateQueue];
     if (result.justWon) {
@@ -197,6 +209,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     if (!gameState) return "No active game.";
     const err = startInvestment(gameState, firmId, type);
+    if (!err) set({ gameState: { ...gameState } });
+    return err;
+  },
+
+  cancelInvestment: (firmId, investmentId) => {
+    const { gameState } = get();
+    if (!gameState) return "No active game.";
+    const err = engineCancelInvestment(gameState, firmId, investmentId);
     if (!err) set({ gameState: { ...gameState } });
     return err;
   },
