@@ -2,12 +2,11 @@ import { useGameStore } from "../../store/gameStore";
 import { euros, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
 import { getBasePrice } from "../../engine/harbor";
+import { displayName, getProductsBySaleDestination } from "../../engine/products";
 import type { ProductId } from "../../types";
 
-const RETAIL_PRODUCTS: ProductId[] = [
-  "ice_cream_strawberry", "printer_branded", "laptop_branded",
-  "chicken", "chicken_soup",
-];
+/** All products that can be sold at consumer retail — driven by the registry. */
+const RETAIL_PRODUCTS: ProductId[] = getProductsBySaleDestination("consumer_retail");
 
 export default function ProductsScreen() {
   const { gameState, lastBooks } = useGameStore();
@@ -115,7 +114,7 @@ export default function ProductsScreen() {
               <tbody>
                 {playerRows.map((row) => (
                   <tr key={row.product} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={td}>{row.product.replace(/_/g, " ")}</td>
+                    <td style={td}>{displayName(row.product)}</td>
                     <td style={{ ...td, color: "var(--text-dim)" }}>{row.firms.join(", ")}</td>
                     <td style={td}>{euros(row.price)}</td>
                     <td style={{ ...td, color: "var(--text-dim)" }}>{euros(row.benchmark)}</td>
@@ -154,7 +153,7 @@ export default function ProductsScreen() {
               <tbody>
                 {aiRows.map((row) => (
                   <tr key={row.product} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td style={td}>{row.product.replace(/_/g, " ")}</td>
+                    <td style={td}>{displayName(row.product)}</td>
                     <td style={{ ...td, color: "var(--text-dim)" }}>{row.firms.join(", ")}</td>
                     <td style={td}>{qty(row.soldLastTurn)}</td>
                     <td style={{ ...td, color: "var(--red)" }}>{euros(row.revenueLastTurn)}</td>

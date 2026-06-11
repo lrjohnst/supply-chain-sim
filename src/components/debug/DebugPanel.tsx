@@ -6,7 +6,8 @@ import { tick } from "../../engine/tick";
 import { computeCorporateBooks } from "../../engine/books";
 import { estimateTurnsToBankruptcy } from "../../engine/bankruptcy";
 import { GameConfig } from "../../config/gameConfig";
-import { getHarborSoldProducts, HARBOR_BASE_PRICES } from "../../engine/harbor";
+import { getHarborSoldProducts, getBasePrice } from "../../engine/harbor";
+import { displayName } from "../../engine/products";
 
 // ================================================================
 // DEBUG PANEL — development only
@@ -404,7 +405,7 @@ function HarborPricesSection({ state }: { state: import("../../types").GameState
         HARBOR PRICES
       </div>
       {products.map((p) => {
-        const base = HARBOR_BASE_PRICES[p];
+        const base = getBasePrice(p);
         const current = (state.harborNode.prices as Record<string, number>)[p] ?? base;
         const shock = state.activeHarborShocks.find((s) => s.productId === p);
         const noise = last?.harborNoiseTerm[p];
@@ -412,7 +413,7 @@ function HarborPricesSection({ state }: { state: import("../../types").GameState
         return (
           <div key={p} style={{ padding: "2px 10px", borderBottom: "1px solid #1a1f2e" }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <span style={{ color: "#8899aa" }}>{p.replace(/_/g, " ")}</span>
+              <span style={{ color: "#8899aa" }}>{displayName(p)}</span>
               <span style={{ color: current > base * 1.05 ? "#ffaa00" : current < base * 0.95 ? "#ff8844" : "#ccddee", fontWeight: 600 }}>
                 €{current.toFixed(2)}
               </span>
@@ -447,7 +448,7 @@ function HarborPricesSection({ state }: { state: import("../../types").GameState
             const progress = 1 / (1 + Math.exp(-k * (s.turnsElapsed - mid)));
             return (
               <div key={s.id}>
-                {s.productId.replace(/_/g, " ")} · shocked €{s.shockedPrice.toFixed(2)} ·{" "}
+                {displayName(s.productId)} · shocked €{s.shockedPrice.toFixed(2)} ·{" "}
                 progress {(progress * 100).toFixed(0)}% · {s.turnsElapsed}/{s.normalizationDuration}t
               </div>
             );
@@ -481,7 +482,7 @@ function HistorySection({ state }: { state: import("../../types").GameState }) {
           const vals = history.map((h) => h.harborPrices[p] ?? 0);
           return (
             <div key={p} style={{ marginBottom: 1 }}>
-              <span style={{ color: "#445566" }}>{p.replace(/_/g, " ").slice(0, 14).padEnd(14)}</span>{" "}
+              <span style={{ color: "#445566" }}>{displayName(p).slice(0, 14).padEnd(14)}</span>{" "}
               <span style={{ color: "#334455", fontFamily: "monospace" }}>
                 {vals.map((v) => v.toFixed(1)).join(" ")}
               </span>
@@ -505,7 +506,7 @@ function HistorySection({ state }: { state: import("../../types").GameState }) {
                 const vals = history.map((h) => h.effectiveDemand[firmId]?.[p] ?? 0);
                 return (
                   <div key={p} style={{ marginBottom: 1 }}>
-                    <span style={{ color: "#445566" }}>{String(p).replace(/_/g, " ").slice(0, 14).padEnd(14)}</span>{" "}
+                    <span style={{ color: "#445566" }}>{displayName(p as import("../../types").ProductId).slice(0, 14).padEnd(14)}</span>{" "}
                     <span style={{ color: "#334455", fontFamily: "monospace" }}>
                       {vals.map((v) => String(v).padStart(4)).join(" ")}
                     </span>

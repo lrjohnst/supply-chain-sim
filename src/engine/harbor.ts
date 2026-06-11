@@ -1,52 +1,37 @@
 /**
- * harbor.ts — single source of truth for harbor products, base prices,
- * and per-turn price calculation (base + shock displacement + noise).
+ * harbor.ts — harbor pricing logic.
  *
- * Architecture note: base prices are static constants defined here.
- * state.harborNode.prices holds the *calculated* price each turn and is
- * what the rest of the engine reads. Nothing outside this file should
- * reference raw base prices directly.
+ * Owns: per-turn price calculation (base + shock displacement + noise),
+ *       shock lifecycle management, and the getHarborSoldProducts() query.
+ *
+ * Does NOT own: base price values (→ gameConfig.harborBasePrices),
+ *               product structure (→ products.ts).
  */
 
 import type { GameState, ProductId, ActiveHarborShock } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { generateId, clamp, sampleNormal } from "./utils";
+import { getProductsByPurchaseSource } from "./products";
 
 // ============================================================
-// Base price catalogue
-// 0 = not sold by harbor
-// ============================================================
-
-export const HARBOR_BASE_PRICES: Record<ProductId, number> = {
-  raw_chicken:        0,    // not sold by harbor
-  chicken:            0,    // not sold by harbor
-  chicken_soup:       0,    // not sold by harbor
-  bauxite:           31,
-  alumina:            0,    // not sold by harbor
-  aluminium:          0,    // not sold via harbor (tender only)
-  laptop_whitelabel: 320,
-  laptop_branded:     0,    // harbor does not sell branded
-  ice_cream_strawberry: 1.4,
-  printer_branded:   95,
-};
-
-// ============================================================
-// Public API
+// Public API — product queries
 // ============================================================
 
 /**
- * Products the harbor currently sells (base price > 0).
- * Ready for dynamic expansion — swap out this function body
- * in the future without touching callers.
+ * Products the harbor currently sells.
+ * Derived from the product registry — any product with "harbor" as a
+ * purchase source and a non-zero base price in config is included.
+ * Ready for dynamic expansion: change the registry or config, not this function.
  */
 export function getHarborSoldProducts(): ProductId[] {
-  return (Object.entries(HARBOR_BASE_PRICES) as [ProductId, number][])
-    .filter(([, price]) => price > 0)
-    .map(([id]) => id);
+  return getProductsByPurchaseSource("harbor").filter(
+    (id) => getBasePrice(id) > 0
+  );
 }
 
+/** Base price for a product. Returns 0 if not sold by harbor. */
 export function getBasePrice(productId: ProductId): number {
-  return HARBOR_BASE_PRICES[productId] ?? 0;
+  return (GameConfig.harborBasePrices as Record<string, number>)[productId] ?? 0;
 }
 
 // ============================================================
@@ -67,10 +52,10 @@ export interface HarborTickData {
  *
  * Price formula (per product, per turn):
  *   price = basePrice + shockDisplacement + noiseTerm
- *   where noiseTerm ~ N(0, noiseStdDev × basePrice)
+ *   noiseTerm ~ N(0, noiseStdDev × basePrice)
  *
  * Shock displacement follows an S-curve decay to zero.
- * When |displacement| < 1% of basePrice, the shock is resolved.
+ * Shock resolves when |displacement| < 1% of basePrice.
  */
 export function tickHarborPrices(state: GameState): HarborTickData {
   const cfg = GameConfig.commodityShockEvents;
@@ -79,15 +64,14 @@ export function tickHarborPrices(state: GameState): HarborTickData {
   const noiseTerm: Partial<Record<ProductId, number>> = {};
   const shockDisplacement: Partial<Record<ProductId, number>> = {};
 
-  // Build a map of current displacement per product from active shocks
+  // Advance all active shocks and compute their displacements
   const displacementMap: Partial<Record<ProductId, number>> = {};
   const resolvedIds = new Set<string>();
 
   for (const shock of state.activeHarborShocks) {
     shock.turnsElapsed += 1;
     const displacement = computeShockDisplacement(shock, cfg.kSteepness);
-    const resolved = Math.abs(displacement) < 0.01 * shock.basePrice;
-    if (resolved) {
+    if (Math.abs(displacement) < 0.01 * shock.basePrice) {
       resolvedIds.add(shock.id);
       displacementMap[shock.productId] = 0;
     } else {
@@ -95,7 +79,6 @@ export function tickHarborPrices(state: GameState): HarborTickData {
     }
   }
 
-  // Remove resolved shocks
   state.activeHarborShocks = state.activeHarborShocks.filter(
     (s) => !resolvedIds.has(s.id)
   );
@@ -126,7 +109,7 @@ export function createHarborShock(
   multiplier: number
 ): void {
   const basePrice = getBasePrice(productId);
-  if (basePrice <= 0) return; // can't shock a product not sold by harbor
+  if (basePrice <= 0) return;
 
   const shockedPrice = +(basePrice * multiplier).toFixed(4);
   const normalizationDuration = Math.max(
@@ -155,10 +138,8 @@ export function createHarborShock(
 
 function computeShockDisplacement(shock: ActiveHarborShock, k: number): number {
   const midpoint = shock.normalizationDuration / 2;
-  // S-curve: progress goes 0→1 as turnsElapsed goes 0→normalizationDuration
   const progress = 1 / (1 + Math.exp(-k * (shock.turnsElapsed - midpoint)));
   return (shock.shockedPrice - shock.basePrice) * (1 - progress);
 }
 
-// Re-export generateId for macroEvents to use without an extra import
 export { clamp };

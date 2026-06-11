@@ -4,8 +4,9 @@ import { euros, pct, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
 import { estimatedDemand } from "../../engine/retail";
 import { transportCostToNode, linksToHarbor } from "../../engine/utils";
-import { getHarborSoldProducts, HARBOR_BASE_PRICES } from "../../engine/harbor";
-import type { Firm, InvestmentType, ProductId } from "../../types";
+import { getHarborSoldProducts } from "../../engine/harbor";
+import { displayName, getProductsHandledBy } from "../../engine/products";
+import type { Firm, FirmType, InvestmentType, ProductId } from "../../types";
 
 export default function RightPanel() {
   const {
@@ -212,7 +213,7 @@ function FirmPanel({ firm }: { firm: Firm }) {
               .filter((l) => l.quantity > 0)
               .map((line) => (
                 <div key={line.product} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-                  <span>{line.product.replace(/_/g, " ")}</span>
+                  <span>{displayName(line.product as ProductId)}</span>
                   <span style={{ color: "var(--text-dim)" }}>
                     {qty(line.quantity)} @ {euros(line.unitCost)}/u
                   </span>
@@ -265,7 +266,7 @@ function FirmPanel({ firm }: { firm: Firm }) {
                     <div key={product}>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
                         <span style={{ fontSize: 11, color: "var(--text)" }}>
-                          {product.replace(/_/g, " ")}
+                          {displayName(product as ProductId)}
                         </span>
                         <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
                           est. {qty(demand)} / {qty(maxDemand)} units
@@ -344,19 +345,15 @@ function FirmPanel({ firm }: { firm: Firm }) {
 // Harbor sourcing
 // ------------------------------------------------------------------
 
-const PRODUCT_LABELS: Partial<Record<ProductId, string>> = {
-  bauxite: "Bauxite",
-  laptop_whitelabel: "White-label laptops",
-  ice_cream_strawberry: "Strawberry ice cream",
-  printer_branded: "Branded printers",
-};
-
-function harborSourceable(firmType: "farm" | "factory" | "store"): { product: ProductId; label: string }[] {
-  if (firmType === "farm") return [];
-  return getHarborSoldProducts().map((p) => ({
-    product: p,
-    label: PRODUCT_LABELS[p] ?? p.replace(/_/g, " "),
-  }));
+/**
+ * Products the harbor sells that the given firm type can handle.
+ * Derived entirely from the registry — no hardcoded lists.
+ */
+function harborSourceable(firmType: FirmType): { product: ProductId; label: string }[] {
+  const handledByFirm = new Set(getProductsHandledBy(firmType));
+  return getHarborSoldProducts()
+    .filter((p) => handledByFirm.has(p))
+    .map((p) => ({ product: p, label: displayName(p) }));
 }
 
 function HarborSourcingSection({
@@ -439,7 +436,7 @@ function HarborSourcingSection({
                 display: "flex", justifyContent: "space-between",
                 padding: "4px 0", fontSize: 11, color: "var(--text-dim)",
               }}>
-                <span style={{ color: "var(--text)" }}>{c.product.replace(/_/g, " ")}</span>
+                <span style={{ color: "var(--text)" }}>{displayName(c.product)}</span>
                 <span>{qty(c.volumePerTurn)}u/turn @ {euros(c.unitPrice)}/u</span>
                 <span className="tag tag-green">{c.durationTurns - c.turnsExecuted}t left</span>
               </div>

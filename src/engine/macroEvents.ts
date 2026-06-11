@@ -2,6 +2,7 @@ import type { GameState, MacroEvent, MacroEventType, ProductId } from "../types"
 import { GameConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
 import { getHarborSoldProducts, createHarborShock } from "./harbor";
+import { displayName } from "./products";
 
 // ============================================================
 // Fire pending events
@@ -144,7 +145,7 @@ export function generateUpcomingEvents(state: GameState): void {
         id: generateId(),
         type: "commodity_price_shock",
         turn: nextTurn,
-        description: `Harbor price for ${productId.replace(/_/g, " ")} has ${direction} sharply.`,
+        description: `Harbor price for ${displayName(productId)} has ${direction} sharply.`,
         payload: { productId, multiplier },
         acknowledged: false,
       });
@@ -200,7 +201,7 @@ export function generateUpcomingEvents(state: GameState): void {
         id: generateId(),
         type: "tender_closure",
         turn: nextTurn,
-        description: `Market tender for ${tender.product.replace(/_/g, " ")} has closed unexpectedly.`,
+        description: `Market tender for ${displayName(tender.product)} has closed unexpectedly.`,
         payload: { tenderId: tender.id },
         acknowledged: false,
       });

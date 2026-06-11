@@ -1,7 +1,8 @@
 import type { GameState, CityNode, HarborNode, MapLink, Corporation, Firm, Tender } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
-import { HARBOR_BASE_PRICES } from "./harbor";
+import { getBasePrice } from "./harbor";
+import { getHarborSoldProducts } from "./harbor";
 
 /** Create a fresh game state. */
 export function newGame(playerName: string): GameState {
@@ -10,7 +11,9 @@ export function newGame(playerName: string): GameState {
     name: "International Harbor",
     position: { x: 900, y: 400 },
     // Prices start at base values; tickHarborPrices overwrites them on turn 0.
-    prices: { ...HARBOR_BASE_PRICES } as HarborNode["prices"],
+    prices: Object.fromEntries(
+      getHarborSoldProducts().map((p) => [p, getBasePrice(p)])
+    ) as HarborNode["prices"],
   };
 
   const cityNodes = buildCityNodes();

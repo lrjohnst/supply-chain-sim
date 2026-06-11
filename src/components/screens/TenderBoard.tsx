@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { euros, qty } from "../shared/fmt";
+import { displayName } from "../../engine/products";
+import type { ProductId } from "../../types";
 
 export default function TenderBoard() {
   const { gameState, bidOnTender } = useGameStore();
@@ -79,7 +81,7 @@ export default function TenderBoard() {
             >
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "var(--text-head)", fontWeight: 600 }}>
-                  {tender.product.replace(/_/g, " ")}
+                  {displayName(tender.product as ProductId)}
                 </span>
                 <span className={`tag tag-${tender.direction === "market" ? "blue" : "gold"}`}>
                   {tender.direction === "market" ? "Market" : "Sourcing"}
@@ -108,7 +110,7 @@ export default function TenderBoard() {
             {closedTenders.slice(-10).reverse().map((tender) => (
               <div key={tender.id} style={{ padding: "8px 16px", borderBottom: "1px solid var(--border)", opacity: 0.6 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 12 }}>{tender.product.replace(/_/g, " ")}</span>
+                  <span style={{ fontSize: 12 }}>{displayName(tender.product as ProductId)}</span>
                   <span className="tag tag-dim">{tender.status}</span>
                 </div>
               </div>
@@ -126,7 +128,7 @@ export default function TenderBoard() {
         {selectedTender && (
           <>
             <h2 style={{ marginBottom: 4 }}>
-              {selectedTender.product.replace(/_/g, " ")}
+              {displayName(selectedTender.product as ProductId)}
             </h2>
             <span className={`tag tag-${selectedTender.direction === "market" ? "blue" : "gold"}`} style={{ marginBottom: 16, display: "inline-block" }}>
               {selectedTender.direction === "market" ? "Market tender" : "Sourcing tender"}

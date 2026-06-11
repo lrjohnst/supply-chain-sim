@@ -1,5 +1,6 @@
 import type { GameState, Transaction, TransactionCategory, ProductId } from "../types";
 import { generateId } from "./utils";
+import { displayName } from "./products";
 
 interface PostArgs {
   state: GameState;
@@ -38,11 +39,10 @@ export function postTransaction(args: PostArgs): Transaction {
 
 function buildDescription(args: PostArgs): string {
   if (args.product && args.quantity !== null && args.unitPrice !== null) {
-    const productLabel = args.product.replace(/_/g, " ");
-    return `${productLabel} — ${args.counterparty} — ${args.quantity}u × €${args.unitPrice.toFixed(2)}/u`;
+    return `${displayName(args.product)} — ${args.counterparty} — ${args.quantity}u × €${args.unitPrice.toFixed(2)}/u`;
   }
   if (args.product) {
-    return `${args.product.replace(/_/g, " ")} — ${args.counterparty}`;
+    return `${displayName(args.product)} — ${args.counterparty}`;
   }
   return `${args.category.replace(/_/g, " ")} — ${args.counterparty}`;
 }

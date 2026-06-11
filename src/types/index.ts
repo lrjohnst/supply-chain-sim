@@ -64,7 +64,8 @@ export interface EconomicSnapshot {
   aiCash: number;
 }
 
-export type FirmType = "farm" | "factory" | "store";
+/** "mine" is a post-MVP firm type included now so product registry handlingFirms stay correct. */
+export type FirmType = "farm" | "factory" | "store" | "mine";
 
 export type NodeType = "city" | "town" | "harbor";
 

@@ -184,8 +184,20 @@ export const GameConfig = {
   firmInvestmentSlotLimit: 8,
 
   // ----------------------------------------------------------
+  // Harbor — base prices (numeric balancing values)
+  // Only products with a non-zero price are listed here; harbor.ts
+  // reads these via getBasePrice() which returns 0 for unlisted products.
+  // The sold-product list is derived from the product registry (purchaseSources).
+  // ----------------------------------------------------------
+  harborBasePrices: {
+    bauxite:              31,
+    laptop_whitelabel:   320,
+    ice_cream_strawberry:  1.4,
+    printer_branded:      95,
+  } as Partial<Record<ProductId, number>>,
+
+  // ----------------------------------------------------------
   // Harbor price noise
-  // Base prices and the sold-product list live in engine/harbor.ts.
   // ----------------------------------------------------------
   harborPrices: {
     /** Std dev of per-turn noise as a fraction of base price. */

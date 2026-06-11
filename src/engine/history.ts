@@ -10,7 +10,7 @@
 
 import type { GameState, EconomicSnapshot, ProductId } from "../types";
 import { GameConfig } from "../config/gameConfig";
-import { HARBOR_BASE_PRICES, getHarborSoldProducts } from "./harbor";
+import { getBasePrice, getHarborSoldProducts } from "./harbor";
 import { corporationNetWorth } from "./utils";
 import type { HarborTickData } from "./harbor";
 import type { RetailTickData } from "./retail";
@@ -49,7 +49,7 @@ export function appendSnapshot(
   // Harbor base prices snapshot (only sold products)
   const harborBasePrices: Partial<Record<ProductId, number>> = {};
   for (const p of getHarborSoldProducts()) {
-    harborBasePrices[p] = HARBOR_BASE_PRICES[p];
+    harborBasePrices[p] = getBasePrice(p);
   }
 
   const snapshot: EconomicSnapshot = {
