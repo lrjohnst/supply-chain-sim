@@ -1,6 +1,7 @@
 import type { GameState, Tender, TenderBid, ProductId } from "../types";
 import { removeFromInventory, addToInventory, generateId } from "./utils";
 import { postTransaction } from "./ledger";
+import { checkMilestones } from "./milestones";
 
 /** Evaluate all open tenders: award bids, execute fulfilled tenders. */
 export function evaluateTenders(state: GameState): void {
@@ -146,10 +147,3 @@ export function submitTenderBid(
   return null;
 }
 
-function checkMilestones(state: GameState, corporationId: string): void {
-  const corp = state.corporations[corporationId];
-  if (!corp.multiYearContractsUnlocked &&
-      corp.cumulativeRevenue >= 100_000) {
-    corp.multiYearContractsUnlocked = true;
-  }
-}

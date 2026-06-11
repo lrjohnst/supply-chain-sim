@@ -1,5 +1,15 @@
 import type { GameState, Corporation } from "../types";
 
+/**
+ * Mark an AI corporation as eliminated. Called when the AI cannot meet an obligation.
+ * The game continues; the AI is simply removed from all future processing.
+ */
+export function eliminateCorporation(state: GameState, corporationId: string): void {
+  const corp = state.corporations[corporationId];
+  if (!corp || corp.isPlayer) return; // only eliminates AI
+  corp.eliminated = true;
+}
+
 // ============================================================
 // Bankruptcy — cash-based insolvency
 // ============================================================

@@ -29,6 +29,7 @@ export function newGame(playerName: string): GameState {
     trainingBudgetPerTurn: 0,
     marketingBudgetPerTurn: 0,
     multiYearContractsUnlocked: false,
+    eliminated: false,
   };
 
   const aiCorp: Corporation = {
@@ -43,6 +44,7 @@ export function newGame(playerName: string): GameState {
     trainingBudgetPerTurn: 500,
     marketingBudgetPerTurn: 0,
     multiYearContractsUnlocked: false,
+    eliminated: false,
   };
 
   const state: GameState = {

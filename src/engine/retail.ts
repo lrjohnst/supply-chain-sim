@@ -3,6 +3,7 @@ import { GameConfig } from "../config/gameConfig";
 import { inventoryQuantity, removeFromInventory } from "./utils";
 import { postTransaction } from "./ledger";
 import { hasInvestment } from "./investments";
+import { checkMilestones } from "./milestones";
 
 /** Run B2C retail sales for all stores. */
 export function runRetailSales(state: GameState): void {
@@ -89,11 +90,7 @@ export function runRetailSales(state: GameState): void {
         });
       }
 
-      // Milestone check
-      if (!corporation.multiYearContractsUnlocked &&
-          corporation.cumulativeRevenue >= GameConfig.game.multiYearContractRevenueThreshold) {
-        corporation.multiYearContractsUnlocked = true;
-      }
+      checkMilestones(state, firm.corporationId);
     }
   }
 }

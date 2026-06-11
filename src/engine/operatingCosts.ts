@@ -1,7 +1,7 @@
 import type { GameState, Firm } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { postTransaction } from "./ledger";
-import { requireCash } from "./bankruptcy";
+import { requireCash, eliminateCorporation } from "./bankruptcy";
 
 /** Operating cost for a firm = sum of operatingCostPerTurn for each COMPLETED investment. */
 export function firmOperatingCost(firm: Firm): number {
@@ -13,9 +13,12 @@ export function firmOperatingCost(firm: Firm): number {
 /** Deduct per-firm operating costs, training, and corporate marketing budget. */
 export function deductOperatingCosts(state: GameState): void {
   for (const corp of Object.values(state.corporations)) {
+    if (corp.eliminated) continue;
+
     // Training budget
     if (corp.trainingBudgetPerTurn > 0) {
       if (corp.isPlayer) requireCash(corp, corp.trainingBudgetPerTurn, "Training budget");
+      else if (corp.cash < corp.trainingBudgetPerTurn) { eliminateCorporation(state, corp.id); continue; }
       postTransaction({
         state,
         turn: state.turn,
@@ -33,6 +36,7 @@ export function deductOperatingCosts(state: GameState): void {
     // Marketing budget
     if (corp.marketingBudgetPerTurn > 0) {
       if (corp.isPlayer) requireCash(corp, corp.marketingBudgetPerTurn, "Marketing budget");
+      else if (corp.cash < corp.marketingBudgetPerTurn) { eliminateCorporation(state, corp.id); continue; }
       postTransaction({
         state,
         turn: state.turn,
@@ -54,6 +58,7 @@ export function deductOperatingCosts(state: GameState): void {
       if (cost <= 0) continue;
 
       if (corp.isPlayer) requireCash(corp, cost, `Operating costs — ${firm.name}`);
+      else if (corp.cash < cost) { eliminateCorporation(state, corp.id); break; }
 
       postTransaction({
         state,

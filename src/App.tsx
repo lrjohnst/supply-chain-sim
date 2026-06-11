@@ -144,17 +144,25 @@ function LossScreen() {
   const [name, setName] = useState("");
   const lastResult = useGameStore((s) => s.lastTickResult);
 
-  const isBankruptcy = !!lastResult?.bankruptcyReason;
+  const lossReason = lastResult?.lossReason ?? null;
   const br = lastResult?.bankruptcyReason;
+  const isAIWin = lossReason === "lost_ai_won";
+  const isBankruptcy = lossReason === "lost_bankruptcy";
 
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg)" }}>
       <div style={{ background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 40, width: 400, textAlign: "center" }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>{isBankruptcy ? "💸" : "⏰"}</div>
-        <div style={{ fontWeight: 700, fontSize: 18, color: "var(--danger)", marginBottom: 8 }}>
-          {isBankruptcy ? "Bankruptcy" : "Time Limit Reached"}
+        <div style={{ fontSize: 32, marginBottom: 12 }}>
+          {isAIWin ? "🏆" : isBankruptcy ? "💸" : "⏰"}
         </div>
-        {isBankruptcy && br ? (
+        <div style={{ fontWeight: 700, fontSize: 18, color: "var(--danger)", marginBottom: 8 }}>
+          {isAIWin ? "You lost." : isBankruptcy ? "Bankruptcy" : "Time Limit Reached"}
+        </div>
+        {isAIWin ? (
+          <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 20 }}>
+            Your rival reached the net worth target first.
+          </div>
+        ) : isBankruptcy && br ? (
           <div style={{ marginBottom: 20 }}>
             <div style={{ color: "var(--text)", fontSize: 13, marginBottom: 8 }}>
               Your corporation could not meet an obligation.

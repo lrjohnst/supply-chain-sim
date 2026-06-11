@@ -11,14 +11,18 @@ import { deductOperatingCosts, updateQuality } from "./operatingCosts";
 import { runAI } from "./ai";
 import { checkWinCondition } from "./winCondition";
 import { BankruptcyError, estimateTurnsToBankruptcy, type BankruptcyReason } from "./bankruptcy";
+import type { LossReason } from "./winCondition";
 
 export interface TickResult {
   firedEvents: MacroEvent[];
   newTurn: number;
+  /** True if the player lost this turn (bankruptcy, AI win, or time limit). */
   isLoss: boolean;
+  /** True if phase just transitioned to "won" this turn. */
   justWon: boolean;
   winner: string | null;
   bankruptcyReason: BankruptcyReason | null;
+  lossReason: LossReason | "lost_bankruptcy" | null;
   /** Estimated turns before bankruptcy at current burn rate. Null if burn is positive. */
   turnsToBankruptcy: number | null;
 }
@@ -61,13 +65,9 @@ export function tick(state: GameState): TickResult {
     if (e instanceof BankruptcyError) {
       state.phase = "lost";
       return {
-        firedEvents,
-        newTurn: state.turn,
-        isLoss: true,
-        justWon: false,
-        winner: null,
-        bankruptcyReason: e.reason,
-        turnsToBankruptcy: null,
+        firedEvents, newTurn: state.turn,
+        isLoss: true, justWon: false, winner: null,
+        bankruptcyReason: e.reason, lossReason: "lost_bankruptcy", turnsToBankruptcy: null,
       };
     }
     throw e;
@@ -75,7 +75,7 @@ export function tick(state: GameState): TickResult {
 
   updateQuality(state);
 
-  // Step 10: estimate turns-to-bankruptcy for early warning
+  // Estimate turns-to-bankruptcy for early warning
   const playerCorp = Object.values(state.corporations).find((c) => c.isPlayer);
   const turnsToBankruptcy = playerCorp
     ? estimateTurnsToBankruptcy(state, playerCorp.id, GameConfig.bankruptcy.lookbackTurns)
@@ -88,8 +88,9 @@ export function tick(state: GameState): TickResult {
   if (result.isLoss) {
     state.phase = "lost";
     return {
-      firedEvents, newTurn: state.turn, isLoss: true,
-      justWon: false, winner: null, bankruptcyReason: null, turnsToBankruptcy,
+      firedEvents, newTurn: state.turn,
+      isLoss: true, justWon: false, winner: null,
+      bankruptcyReason: null, lossReason: result.reason, turnsToBankruptcy,
     };
   }
 
@@ -100,7 +101,8 @@ export function tick(state: GameState): TickResult {
   state.turn += 1;
 
   return {
-    firedEvents, newTurn: state.turn, isLoss: false,
-    justWon, winner: result.winner, bankruptcyReason: null, turnsToBankruptcy,
+    firedEvents, newTurn: state.turn,
+    isLoss: false, justWon, winner: result.winner,
+    bankruptcyReason: null, lossReason: null, turnsToBankruptcy,
   };
 }

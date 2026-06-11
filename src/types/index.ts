@@ -280,6 +280,8 @@ export interface Corporation {
   trainingBudgetPerTurn: number;
   marketingBudgetPerTurn: number;
   multiYearContractsUnlocked: boolean;
+  /** AI only. Set when the AI cannot meet an obligation. Game continues without it. */
+  eliminated: boolean;
 }
 
 // ============================================================

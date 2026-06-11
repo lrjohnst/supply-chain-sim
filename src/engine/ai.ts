@@ -9,7 +9,7 @@ import { makeFirm } from "./newGame";
 /** Run one turn of AI decision-making. Called after the player ends their turn. */
 export function runAI(state: GameState): void {
   const aiCorp = Object.values(state.corporations).find((c) => !c.isPlayer);
-  if (!aiCorp) return;
+  if (!aiCorp || aiCorp.eliminated) return;
 
   bidOnOpenTenders(state, aiCorp.id);
   expandIfOpportunity(state, aiCorp.id);
