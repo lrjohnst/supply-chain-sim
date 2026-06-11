@@ -383,6 +383,14 @@ export const GameConfig = {
   },
 
   // ----------------------------------------------------------
+  // Bankruptcy early warning
+  // ----------------------------------------------------------
+  bankruptcy: {
+    warningThresholdTurns: 10,  // warn if < 10 turns of cash remain at current burn rate
+    lookbackTurns: 4,           // turns of history used to estimate average burn rate
+  },
+
+  // ----------------------------------------------------------
   // Seeded tenders at game start
   // ----------------------------------------------------------
   startingTenders: [

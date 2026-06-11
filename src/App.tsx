@@ -141,23 +141,49 @@ function StartScreen({ playerName, setPlayerName, onStart }: {
 
 function LossScreen() {
   const { startNewGame } = useGameStore();
-  const gameState = useGameStore((s) => s.gameState);
   const [name, setName] = useState("");
-
-  // Determine loss reason from last tick result
   const lastResult = useGameStore((s) => s.lastTickResult);
-  const message = lastResult?.isLoss
-    ? "Your corporation is bankrupt or time has run out."
-    : "The game has ended.";
+
+  const isBankruptcy = !!lastResult?.bankruptcyReason;
+  const br = lastResult?.bankruptcyReason;
 
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg)" }}>
-      <div style={{ background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 40, width: 360, textAlign: "center" }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>📉</div>
+      <div style={{ background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 40, width: 400, textAlign: "center" }}>
+        <div style={{ fontSize: 32, marginBottom: 12 }}>{isBankruptcy ? "💸" : "⏰"}</div>
         <div style={{ fontWeight: 700, fontSize: 18, color: "var(--danger)", marginBottom: 8 }}>
-          Game Over
+          {isBankruptcy ? "Bankruptcy" : "Time Limit Reached"}
         </div>
-        <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 24 }}>{message}</div>
+        {isBankruptcy && br ? (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ color: "var(--text)", fontSize: 13, marginBottom: 8 }}>
+              Your corporation could not meet an obligation.
+            </div>
+            <div style={{
+              background: "var(--bg-card)", border: "1px solid var(--border)",
+              borderRadius: 6, padding: "10px 14px", textAlign: "left",
+            }}>
+              <div style={{ color: "var(--text-dim)", fontSize: 11, marginBottom: 3 }}>OBLIGATION</div>
+              <div style={{ color: "var(--text-head)", fontSize: 13, marginBottom: 8 }}>{br.obligation}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span style={{ color: "var(--text-dim)" }}>Amount due</span>
+                <span style={{ color: "var(--danger)" }}>€{Math.round(br.amount).toLocaleString()}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span style={{ color: "var(--text-dim)" }}>Cash available</span>
+                <span style={{ color: "var(--warn)" }}>€{Math.round(br.cashAvailable).toLocaleString()}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, borderTop: "1px solid var(--border)", marginTop: 6, paddingTop: 6 }}>
+                <span style={{ color: "var(--text-dim)" }}>Shortfall</span>
+                <span style={{ color: "var(--danger)", fontWeight: 700 }}>€{Math.round(br.shortfall).toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 20 }}>
+            200 turns elapsed without reaching the net worth target.
+          </div>
+        )}
         <input style={{ width: "100%", marginBottom: 10 }} placeholder="New corporation name"
           value={name} onChange={(e) => setName(e.target.value)} />
         <button className="primary" style={{ width: "100%", padding: "10px 0" }}

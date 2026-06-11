@@ -9,6 +9,7 @@ import { createContract } from "../engine/contracts";
 import { submitTenderBid } from "../engine/tenders";
 import type { InvestmentType, Contract } from "../types";
 import type { AppNotification, GateAction } from "./notificationTypes";
+import { GameConfig } from "../config/gameConfig";
 
 export type Screen = "map" | "tenders" | "books" | "finance" | "products";
 
@@ -164,6 +165,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ],
         },
       ];
+    }
+
+    // Bankruptcy early warning notification
+    if (result.turnsToBankruptcy !== null &&
+        result.turnsToBankruptcy <= GameConfig.bankruptcy.warningThresholdTurns) {
+      newNotifs.push({
+        id: notifId(),
+        turn: gameState.turn - 1,
+        message: `⚠ At your current burn rate you will be unable to meet obligations in approximately ${result.turnsToBankruptcy} turn${result.turnsToBankruptcy === 1 ? "" : "s"}.`,
+        dismissed: false,
+        persistent: false,
+      });
     }
 
     set((s) => ({

@@ -78,12 +78,14 @@ export function runRetailSales(state: GameState): void {
         product: product as ProductId, quantity: removed, unitPrice: retailPrice, total: revenue,
       });
 
+      // COGS: P&L-only entry — total: 0 because cash already left when goods were purchased.
+      // Records cost basis against revenue for firm-level books without double-counting cash.
       if (unitCost > 0) {
         postTransaction({
           state, turn: state.turn, firmId: firm.id, corporationId: firm.corporationId,
           category: "input_cost", counterparty: "Cost of goods sold",
           product: product as ProductId, quantity: removed, unitPrice: unitCost,
-          total: -(removed * unitCost),
+          total: 0,
         });
       }
 

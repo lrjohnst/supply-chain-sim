@@ -3,7 +3,7 @@ import { GameConfig } from "../config/gameConfig";
 import { corporationNetWorth } from "./utils";
 
 export type WinReason = "won";
-export type LossReason = "lost_time_limit" | "lost_bankruptcy";
+export type LossReason = "lost_time_limit";
 
 export interface WinConditionResult {
   gameOver: boolean;
@@ -43,14 +43,6 @@ export function checkWinCondition(state: GameState): WinConditionResult {
     return {
       gameOver: true, isWin: true, isLoss: false,
       winner: playerCorp.id, reason: "won", netWorth: playerNetWorth,
-    };
-  }
-
-  // Loss: bankruptcy
-  if (playerNetWorth < 0) {
-    return {
-      gameOver: true, isWin: false, isLoss: true,
-      winner: null, reason: "lost_bankruptcy", netWorth: playerNetWorth,
     };
   }
 

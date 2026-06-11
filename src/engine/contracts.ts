@@ -1,6 +1,7 @@
 import type { GameState, Contract, ProductId } from "../types";
 import { removeFromInventory, addToInventory } from "./utils";
 import { postTransaction } from "./ledger";
+import { requireCash } from "./bankruptcy";
 
 /** Execute all active contracts for this turn. */
 export function executeContracts(state: GameState): void {
@@ -30,6 +31,10 @@ function executeContract(state: GameState, contract: Contract): void {
     if (!buyerFirm) return;
 
     const total = volumePerTurn * unitPrice;
+    const buyerCorp = state.corporations[buyerParty.corporationId!];
+    if (buyerCorp?.isPlayer) {
+      requireCash(buyerCorp, total, `Harbor supply — ${product.replace(/_/g, " ")} (${volumePerTurn}u × €${unitPrice.toFixed(2)}/u)`);
+    }
     addToInventory(buyerFirm.inventory, product, volumePerTurn, unitPrice);
 
     const buyerCorpId = buyerParty.corporationId!;

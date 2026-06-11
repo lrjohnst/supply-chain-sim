@@ -17,21 +17,37 @@ import { GameConfig } from "../config/gameConfig";
 // Player strategy: conservative ice cream retail
 // ------------------------------------------------------------------
 
+// ID of the player's store — set in setup, used in playerTurn for contract renewal
+let playerStoreId: string | null = null;
+
 function playerSetup(state: GameState, playerCorpId: string) {
   // Build a store in Aldenmoor (city_a — largest city)
-  const storeId = buildFirm(state, playerCorpId, "city_a", "store", "Aldenmoor Store");
-  if (!storeId) return;
+  playerStoreId = buildFirm(state, playerCorpId, "city_a", "store", "Aldenmoor Store");
+  if (!playerStoreId) return;
 
   // Invest in grocery section
-  startInvestment(state, storeId, "grocery_section");
-
-  // Set up harbor supply contract for ice cream (demand ~2400/turn in 800k city)
-  // Start it immediately — grocery section will complete in 2 turns
-  createHarborContract(state, playerCorpId, storeId, "ice_cream_strawberry", 400, 40);
+  startInvestment(state, playerStoreId, "grocery_section");
+  // Note: do NOT create a harbor contract here — multi-year contracts are locked
+  // at game start. playerTurn will create short-term contracts each turn.
 }
 
-function playerTurn(_state: GameState, _playerCorpId: string) {
-  // Conservative player does nothing after setup
+function playerTurn(state: GameState, playerCorpId: string) {
+  if (!playerStoreId) return;
+  const corp = state.corporations[playerCorpId];
+
+  // Renew ice cream supply contract if none is active for this store
+  const activeIceCream = Object.values(state.contracts).some(
+    (c) =>
+      c.status === "active" &&
+      c.product === "ice_cream_strawberry" &&
+      c.buyerParty.firmId === playerStoreId &&
+      state.turn < c.startTurn + c.durationTurns
+  );
+
+  if (!activeIceCream) {
+    // Short-term contract (2 turns) — always available
+    createHarborContract(state, playerCorpId, playerStoreId, "ice_cream_strawberry", 400, 2);
+  }
 }
 
 // ------------------------------------------------------------------
@@ -120,6 +136,9 @@ function run() {
   // Player setup on turn 0 before first tick
   playerSetup(state, playerCorpId);
 
+  // Early diagnostics: print per-turn ledger for first 8 turns
+  console.log("\n--- Early turn diagnostics (first 8 turns) ---");
+
   const snapshots: {
     turn: number;
     playerNW: number; playerCash: number; playerProfit: number;
@@ -135,6 +154,13 @@ function run() {
     const pBooks = computeCorporateBooks(state, playerCorpId, t);
     const aBooks = computeCorporateBooks(state, aiCorpId, t);
 
+    if (t < 8) {
+      const txSummary = pBooks.lines.filter((tx) => tx.total !== 0)
+        .map((tx) => `    ${tx.category.padEnd(18)} ${tx.description.slice(0, 50).padEnd(50)} ${tx.total >= 0 ? "+" : ""}${Math.round(tx.total).toLocaleString()}`).join("\n");
+      console.log(`  ${turnLabel(t)}: revenue=${Math.round(pBooks.revenue)} inputCosts=${Math.round(pBooks.inputCosts)} operating=${Math.round(pBooks.operatingCosts)} net=${Math.round(pBooks.netProfit)} cash=${Math.round(state.corporations[playerCorpId].cash)}`);
+      if (txSummary) console.log(txSummary);
+    }
+
     snapshots.push({
       turn: t,
       playerNW: corporationNetWorth(state, playerCorpId),
@@ -146,9 +172,17 @@ function run() {
       events: result.firedEvents.map((e) => e.description),
     });
 
-    if (result.gameOver) {
-      console.log(`\n*** GAME OVER at ${turnLabel(t)} — Winner: ${result.winner === playerCorpId ? "PLAYER" : "AI"} ***\n`);
+    if (result.isLoss) {
+      console.log(`\n*** BANKRUPTCY / LOSS at ${turnLabel(t)} ***`);
+      if (result.bankruptcyReason) {
+        console.log(`  Obligation: ${result.bankruptcyReason.obligation}`);
+        console.log(`  Amount due: €${Math.round(result.bankruptcyReason.amount).toLocaleString()}`);
+        console.log(`  Cash available: €${Math.round(result.bankruptcyReason.cashAvailable).toLocaleString()}`);
+      }
       break;
+    }
+    if (result.justWon) {
+      console.log(`\n*** WIN at ${turnLabel(t)} — net worth €${Math.round(corporationNetWorth(state, playerCorpId)).toLocaleString()} ***\n`);
     }
   }
 

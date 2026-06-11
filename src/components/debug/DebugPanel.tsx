@@ -4,6 +4,8 @@ import { corporationNetWorth } from "../../engine/utils";
 import { checkWinCondition } from "../../engine/winCondition";
 import { tick } from "../../engine/tick";
 import { computeCorporateBooks } from "../../engine/books";
+import { estimateTurnsToBankruptcy } from "../../engine/bankruptcy";
+import { GameConfig } from "../../config/gameConfig";
 
 // ================================================================
 // DEBUG PANEL — development only
@@ -61,6 +63,10 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
   const year = 1980 + Math.floor(gameState.turn / 4);
   const quarter = (gameState.turn % 4) + 1;
 
+  const ttb = playerCorp
+    ? estimateTurnsToBankruptcy(gameState, playerCorp.id, GameConfig.bankruptcy.lookbackTurns)
+    : null;
+
   // ----------------------------------------------------------------
   // Built-in stats
   // ----------------------------------------------------------------
@@ -73,6 +79,11 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
     { group: "Player", label: "Outstanding loans", value: `€${Math.round(totalLoans).toLocaleString()}`, highlight: totalLoans > 200_000 ? "warn" : undefined },
     { group: "Player", label: "Cumulative revenue", value: `€${Math.round(playerCorp?.cumulativeRevenue ?? 0).toLocaleString()}` },
     { group: "Player", label: "Firms", value: playerCorp?.firmIds.length ?? 0 },
+    {
+      group: "Player", label: "Turns to bankruptcy",
+      value: ttb === null ? "safe" : ttb,
+      highlight: ttb !== null && ttb <= GameConfig.bankruptcy.warningThresholdTurns ? "danger" : ttb !== null && ttb <= 20 ? "warn" : undefined,
+    },
     { group: "Player", label: "Multi-year contracts", value: playerCorp?.multiYearContractsUnlocked ? "Unlocked" : "Locked" },
     { group: "AI", label: "AI net worth", value: `€${Math.round(aiNW).toLocaleString()}`, highlight: aiNW > 4_000_000 ? "warn" : undefined },
     { group: "AI", label: "AI cash", value: `€${Math.round(aiCorp?.cash ?? 0).toLocaleString()}` },

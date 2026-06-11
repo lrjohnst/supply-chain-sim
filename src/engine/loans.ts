@@ -2,6 +2,7 @@ import type { GameState, Loan } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
 import { postTransaction } from "./ledger";
+import { requireCash } from "./bankruptcy";
 
 /** Accrue interest and process quarterly loan payments. */
 export function processLoans(state: GameState): void {
@@ -10,6 +11,15 @@ export function processLoans(state: GameState): void {
 
     const quarterlyRate = loan.annualInterestRate / GameConfig.game.quartersPerYear;
     const interest = loan.outstandingBalance * quarterlyRate;
+    const principal = loan.quarterlyPayment - interest;
+    const principalRepaid = Math.min(Math.max(principal, 0), loan.outstandingBalance);
+    const totalDue = interest + principalRepaid;
+
+    // Bankruptcy check: player must be able to cover the full quarterly payment
+    const corp = state.corporations[loan.corporationId];
+    if (corp?.isPlayer) {
+      requireCash(corp, totalDue, `Loan repayment (€${Math.round(interest).toLocaleString()} interest + €${Math.round(principalRepaid).toLocaleString()} principal)`);
+    }
 
     // Post interest expense
     postTransaction({
@@ -26,8 +36,6 @@ export function processLoans(state: GameState): void {
     });
 
     // Post principal repayment
-    const principal = loan.quarterlyPayment - interest;
-    const principalRepaid = Math.min(Math.max(principal, 0), loan.outstandingBalance);
 
     if (principalRepaid > 0) {
       loan.outstandingBalance -= principalRepaid;
