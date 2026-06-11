@@ -293,8 +293,8 @@ export const GameConfig = {
   // are one config change away.
   // ----------------------------------------------------------
   salesRamp: {
-    kSteepness: 0.14,      // logistic k; higher = sharper growth transition
-    midpointProgress: 15,  // progress value at 50% demand
+    kSteepness: 0.30,      // logistic k; higher = sharper growth transition
+    midpointProgress: 7,   // progress value at 50% demand (~32 turns of perfect play)
   },
 
   // ----------------------------------------------------------
