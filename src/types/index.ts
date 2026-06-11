@@ -307,15 +307,6 @@ export interface MacroEvent {
 // Game state
 // ============================================================
 
-// Pending win notification — shown to player before game ends.
-// Only set for wins (net worth threshold). Losses end immediately.
-export interface PendingWin {
-  winner: EntityId;           // corporation that crossed the threshold
-  netWorth: number;           // net worth at the moment of crossing
-  turn: number;               // turn it happened
-  suppressFuture: boolean;    // set to true when player chooses Keep Playing
-}
-
 export interface GameState {
   turn: number;
   phase: "setup" | "playing" | "won" | "lost";
@@ -332,8 +323,6 @@ export interface GameState {
   eventHistory: MacroEvent[];
   barcodeAvailable: boolean;
   recessionTurnsRemaining: number;
-  // Set when a win condition is met. Null when no pending notification.
-  pendingWin: PendingWin | null;
 }
 
 // ============================================================

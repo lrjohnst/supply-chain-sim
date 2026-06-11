@@ -7,11 +7,11 @@ export type LossReason = "lost_time_limit" | "lost_bankruptcy";
 
 export interface WinConditionResult {
   gameOver: boolean;
-  isWin: boolean;            // true = win (player chooses when to end)
-  isLoss: boolean;           // true = loss (ends immediately, no choice)
-  winner: string | null;     // corporation ID if won
+  isWin: boolean;
+  isLoss: boolean;
+  winner: string | null;
   reason: WinReason | LossReason | null;
-  netWorth: number;          // net worth of the relevant corporation at evaluation
+  netWorth: number;
 }
 
 const NO_RESULT: WinConditionResult = {
@@ -20,15 +20,14 @@ const NO_RESULT: WinConditionResult = {
 };
 
 /**
- * Evaluate all win/loss conditions against the current game state.
- * Reports only — never mutates state.phase or state.pendingWin.
+ * Evaluate all win/loss conditions. Reports only — never mutates state.
  *
- * Win (player confirms when to end):
+ * Win (phase → "won", player continues until they choose to end):
  *   - Player net worth reaches the configured threshold.
  *
- * Loss (immediate, no player choice):
- *   - Time limit reached (turn count).
- *   - Player corporation is bankrupt (net worth below zero).
+ * Loss (phase → "lost", immediate, no player choice):
+ *   - Player net worth below zero (bankruptcy).
+ *   - Turn count reached the time limit.
  *
  * Post-MVP: add domination, supply chain monopoly, conglomerate,
  * greenhouse gas free win conditions here.
@@ -39,7 +38,7 @@ export function checkWinCondition(state: GameState): WinConditionResult {
 
   const playerNetWorth = corporationNetWorth(state, playerCorp.id);
 
-  // Win: player net worth threshold
+  // Win: net worth threshold
   if (playerNetWorth >= GameConfig.game.netWorthWinThreshold) {
     return {
       gameOver: true, isWin: true, isLoss: false,
@@ -47,7 +46,7 @@ export function checkWinCondition(state: GameState): WinConditionResult {
     };
   }
 
-  // Loss: bankruptcy (player net worth below zero)
+  // Loss: bankruptcy
   if (playerNetWorth < 0) {
     return {
       gameOver: true, isWin: false, isLoss: true,

@@ -13,7 +13,10 @@ import { checkWinCondition } from "./winCondition";
 export interface TickResult {
   firedEvents: MacroEvent[];
   newTurn: number;
-  gameOver: boolean;
+  /** True if the player lost this turn (bankruptcy or time limit). */
+  isLoss: boolean;
+  /** True if phase just transitioned to "won" this turn. */
+  justWon: boolean;
   winner: string | null;
 }
 
@@ -33,68 +36,40 @@ export interface TickResult {
  *  9.  Update firm quality
  *  10. Run AI decisions
  *  11. Check win/loss conditions
- *      - Win: set pendingWin notification, continue turn (player decides when to end)
- *      - Loss: set phase to "lost", return early (no choice, no events queued)
+ *      - Win: phase → "won" immediately. Turn continues (events generated, counter advances).
+ *        The store handles notification and gate registration on justWon.
+ *      - Loss: phase → "lost". Return early — no events for an unplayed turn.
  *  12. Generate upcoming macro events
  *  13. Advance turn counter
  */
 export function tick(state: GameState): TickResult {
-  // 1. Fire pending macro events
   const firedEvents = firePendingEvents(state);
-
-  // 2. Advance investments
   advanceInvestments(state);
-
-  // 3. Production
   runProduction(state);
-
-  // 4. Contracts
   executeContracts(state);
-
-  // 5. Tenders
   evaluateTenders(state);
-
-  // 6. Retail
   runRetailSales(state);
-
-  // 7. Loans
   processLoans(state);
-
-  // 8. Operating costs
   deductOperatingCosts(state);
-
-  // 9. Quality
   updateQuality(state);
-
-  // 10. AI
   runAI(state);
 
-  // 11. Win/loss check
   const result = checkWinCondition(state);
 
   if (result.isLoss) {
-    // Loss: end immediately, no player choice
     state.phase = "lost";
-    return { firedEvents, newTurn: state.turn, gameOver: true, winner: null };
+    return { firedEvents, newTurn: state.turn, isLoss: true, justWon: false, winner: null };
   }
 
-  if (result.isWin && !state.pendingWin?.suppressFuture) {
-    // Win: notify player — they choose when to end
-    // Only set if no prior suppressed notification exists
-    state.pendingWin = {
-      winner: result.winner!,
-      netWorth: result.netWorth,
-      turn: state.turn,
-      suppressFuture: false,
-    };
-    // Game continues — fall through to generate events and advance turn
+  const justWon = result.isWin && state.phase !== "won";
+  if (justWon) {
+    state.phase = "won";
   }
 
-  // 12. Generate upcoming macro events (only if game is still playing)
+  // Generate events and advance turn regardless of win state —
+  // the player continues playing after winning.
   generateUpcomingEvents(state);
-
-  // 13. Advance turn counter
   state.turn += 1;
 
-  return { firedEvents, newTurn: state.turn, gameOver: false, winner: null };
+  return { firedEvents, newTurn: state.turn, isLoss: false, justWon, winner: result.winner };
 }

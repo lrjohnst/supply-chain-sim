@@ -114,7 +114,7 @@ export default function BottomBar() {
       <button
         className="primary"
         style={{ marginLeft: "auto", padding: "8px 20px", fontSize: 13 }}
-        disabled={gameState.phase !== "playing"}
+        disabled={gameState.phase === "lost"}
         onClick={endTurn}
       >
         End Turn →

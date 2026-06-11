@@ -7,6 +7,8 @@ import TenderBoard from "./components/screens/TenderBoard";
 import BooksScreen from "./components/screens/BooksScreen";
 import FinanceScreen from "./components/screens/FinanceScreen";
 import ProductsScreen from "./components/screens/ProductsScreen";
+import GatePrompt from "./components/notifications/GatePrompt";
+import { NotificationBell, NotificationPanel } from "./components/notifications/NotificationPanel";
 
 export default function App() {
   const { gameState, activeScreen, setScreen, startNewGame } = useGameStore();
@@ -16,13 +18,21 @@ export default function App() {
     return <StartScreen playerName={playerName} setPlayerName={setPlayerName} onStart={startNewGame} />;
   }
 
-  if (gameState.phase === "won" || gameState.phase === "lost") {
-    return <GameOverScreen won={gameState.phase === "won"} reason={gameState.phase === "lost" ? "loss" : "win"} />;
+  if (gameState.phase === "lost") {
+    return <LossScreen />;
   }
 
+  // phase "won" or "playing" — both render the playing UI
+  // The gate handles win acknowledgement; the player can keep playing after winning.
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {gameState.pendingWin && <WinNotificationOverlay />}
+
+      {/* Gate prompt — modal, intercepts End Turn */}
+      <GatePrompt />
+
+      {/* Notification panel — non-blocking side panel */}
+      <NotificationPanel />
+
       {/* Top nav */}
       <div style={{
         height: 42,
@@ -33,13 +43,20 @@ export default function App() {
         padding: "0 12px",
         gap: 4,
         flexShrink: 0,
+        zIndex: 10,
       }}>
         <span style={{ color: "var(--gold)", fontWeight: 700, fontSize: 13, marginRight: 16, letterSpacing: "0.05em" }}>
           SUPPLY CHAIN SIM
         </span>
+        {gameState.phase === "won" && (
+          <span style={{ color: "var(--gold)", fontSize: 11, marginRight: 8 }}>🏆 Won</span>
+        )}
         {(["map", "tenders", "books", "finance", "products"] as const).map((s) => (
           <NavTab key={s} label={NAV_LABELS[s]} active={activeScreen === s} onClick={() => setScreen(s as Screen)} />
         ))}
+        <div style={{ marginLeft: "auto" }}>
+          <NotificationBell />
+        </div>
       </div>
 
       {/* Main content */}
@@ -78,7 +95,9 @@ function NavTab({ label, active, onClick }: { label: string; active: boolean; on
   );
 }
 
-const NAV_LABELS: Record<string, string> = { map: "Map", tenders: "Tenders", books: "Books", finance: "Finance", products: "Products" };
+const NAV_LABELS: Record<string, string> = {
+  map: "Map", tenders: "Tenders", books: "Books", finance: "Finance", products: "Products",
+};
 
 function StartScreen({ playerName, setPlayerName, onStart }: {
   playerName: string; setPlayerName: (v: string) => void; onStart: (name: string) => void;
@@ -93,7 +112,9 @@ function StartScreen({ playerName, setPlayerName, onStart }: {
           Build a corporate empire. Start year: 1980.
         </div>
         <div style={{ textAlign: "left", marginBottom: 16 }}>
-          <label style={{ display: "block", fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>Corporation name</label>
+          <label style={{ display: "block", fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>
+            Corporation name
+          </label>
           <input
             style={{ width: "100%" }}
             placeholder="Enter your corporation name"
@@ -114,78 +135,31 @@ function StartScreen({ playerName, setPlayerName, onStart }: {
   );
 }
 
-function GameOverScreen({ won, reason }: { won: boolean; reason: string }) {
+function LossScreen() {
   const { startNewGame } = useGameStore();
+  const gameState = useGameStore((s) => s.gameState);
   const [name, setName] = useState("");
-  const lossMessage = reason === "loss"
-    ? (won ? "" : "Your corporation is bankrupt or time has run out.")
-    : "";
+
+  // Determine loss reason from last tick result
+  const lastResult = useGameStore((s) => s.lastTickResult);
+  const message = lastResult?.isLoss
+    ? "Your corporation is bankrupt or time has run out."
+    : "The game has ended.";
+
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg)" }}>
-      <div style={{ background: "var(--bg-panel)", border: `1px solid ${won ? "var(--gold-dim)" : "var(--border)"}`, borderRadius: 12, padding: 40, width: 360, textAlign: "center" }}>
-        <div style={{ fontSize: 32, marginBottom: 12 }}>{won ? "🏆" : "📉"}</div>
-        <div style={{ fontWeight: 700, fontSize: 18, color: won ? "var(--gold)" : "var(--danger)", marginBottom: 8 }}>
-          {won ? "Victory" : "Game Over"}
+      <div style={{ background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 40, width: 360, textAlign: "center" }}>
+        <div style={{ fontSize: 32, marginBottom: 12 }}>📉</div>
+        <div style={{ fontWeight: 700, fontSize: 18, color: "var(--danger)", marginBottom: 8 }}>
+          Game Over
         </div>
-        <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 24 }}>
-          {won ? "You chose to end the game." : lossMessage}
-        </div>
+        <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 24 }}>{message}</div>
         <input style={{ width: "100%", marginBottom: 10 }} placeholder="New corporation name"
           value={name} onChange={(e) => setName(e.target.value)} />
         <button className="primary" style={{ width: "100%", padding: "10px 0" }}
           disabled={!name.trim()} onClick={() => startNewGame(name.trim())}>
           Play Again
         </button>
-      </div>
-    </div>
-  );
-}
-
-function WinNotificationOverlay() {
-  const { gameState, confirmEndGame, keepPlaying } = useGameStore();
-  const pendingWin = gameState?.pendingWin;
-  if (!pendingWin) return null;
-
-  const corp = gameState?.corporations[pendingWin.winner];
-  const nw = pendingWin.netWorth.toLocaleString("en-GB", { maximumFractionDigits: 0 });
-
-  return (
-    <div style={{
-      position: "absolute", inset: 0, zIndex: 100,
-      background: "rgba(0,0,0,0.7)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-    }}>
-      <div style={{
-        background: "var(--bg-panel)",
-        border: "1px solid var(--gold-dim)",
-        borderRadius: 12, padding: 40, width: 400, textAlign: "center",
-      }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>🏆</div>
-        <div style={{ fontWeight: 700, fontSize: 20, color: "var(--gold)", marginBottom: 8 }}>
-          Win condition reached
-        </div>
-        <div style={{ color: "var(--text)", fontSize: 13, marginBottom: 6 }}>
-          {corp?.name} has reached a net worth of €{nw}.
-        </div>
-        <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 28 }}>
-          You can end the game now and claim victory, or keep playing.
-          If you keep playing, this notification will not appear again.
-        </div>
-        <div style={{ display: "flex", gap: 12 }}>
-          <button
-            className="primary"
-            style={{ flex: 1, padding: "10px 0", fontSize: 13 }}
-            onClick={confirmEndGame}
-          >
-            End Game
-          </button>
-          <button
-            style={{ flex: 1, padding: "10px 0", fontSize: 13 }}
-            onClick={keepPlaying}
-          >
-            Keep Playing
-          </button>
-        </div>
       </div>
     </div>
   );
