@@ -4,6 +4,7 @@ import { euros, pct, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
 import { estimatedDemand } from "../../engine/retail";
 import { transportCostToNode, linksToHarbor } from "../../engine/utils";
+import { getHarborSoldProducts, HARBOR_BASE_PRICES } from "../../engine/harbor";
 import type { Firm, InvestmentType, ProductId } from "../../types";
 
 export default function RightPanel() {
@@ -343,20 +344,20 @@ function FirmPanel({ firm }: { firm: Firm }) {
 // Harbor sourcing
 // ------------------------------------------------------------------
 
-const HARBOR_SOURCEABLE: Record<"farm" | "factory" | "store", { product: ProductId; label: string }[]> = {
-  farm: [],
-  factory: [
-    { product: "bauxite", label: "Bauxite" },
-    { product: "laptop_whitelabel", label: "White-label laptops" },
-  ],
-  store: [
-    { product: "ice_cream_strawberry", label: "Strawberry ice cream" },
-    { product: "printer_branded", label: "Branded printers" },
-    { product: "chicken", label: "Chicken (processed)" },
-    { product: "chicken_soup", label: "Chicken soup" },
-    { product: "laptop_branded", label: "Branded laptops" },
-  ],
+const PRODUCT_LABELS: Partial<Record<ProductId, string>> = {
+  bauxite: "Bauxite",
+  laptop_whitelabel: "White-label laptops",
+  ice_cream_strawberry: "Strawberry ice cream",
+  printer_branded: "Branded printers",
 };
+
+function harborSourceable(firmType: "farm" | "factory" | "store"): { product: ProductId; label: string }[] {
+  if (firmType === "farm") return [];
+  return getHarborSoldProducts().map((p) => ({
+    product: p,
+    label: PRODUCT_LABELS[p] ?? p.replace(/_/g, " "),
+  }));
+}
 
 function HarborSourcingSection({
   firm,
@@ -376,7 +377,7 @@ function HarborSourcingSection({
 
   if (!gameState) return null;
 
-  const sourceable = HARBOR_SOURCEABLE[firm.type];
+  const sourceable = harborSourceable(firm.type);
   if (sourceable.length === 0) return null;
 
   const playerCorp = Object.values(gameState.corporations).find((c) => c.isPlayer);
