@@ -32,10 +32,11 @@ export interface TickResult {
  *  8.  Deduct operating, training, marketing costs
  *  9.  Update firm quality
  *  10. Run AI decisions
- *  11. Check win condition
- *  12. If game over: set phase, return early (no events generated for unplayed turn)
- *  13. Generate upcoming macro events
- *  14. Advance turn counter
+ *  11. Check win/loss conditions
+ *      - Win: set pendingWin notification, continue turn (player decides when to end)
+ *      - Loss: set phase to "lost", return early (no choice, no events queued)
+ *  12. Generate upcoming macro events
+ *  13. Advance turn counter
  */
 export function tick(state: GameState): TickResult {
   // 1. Fire pending macro events
@@ -68,19 +69,31 @@ export function tick(state: GameState): TickResult {
   // 10. AI
   runAI(state);
 
-  // 11. Check win condition
-  const { gameOver, winner, reason } = checkWinCondition(state);
+  // 11. Win/loss check
+  const result = checkWinCondition(state);
 
-  // 12. If game is over, set phase and return — no events generated for an unplayed turn
-  if (gameOver) {
-    state.phase = reason === "won" ? "won" : "lost";
-    return { firedEvents, newTurn: state.turn, gameOver: true, winner };
+  if (result.isLoss) {
+    // Loss: end immediately, no player choice
+    state.phase = "lost";
+    return { firedEvents, newTurn: state.turn, gameOver: true, winner: null };
   }
 
-  // 13. Generate upcoming macro events (only if game continues)
+  if (result.isWin && !state.pendingWin?.suppressFuture) {
+    // Win: notify player — they choose when to end
+    // Only set if no prior suppressed notification exists
+    state.pendingWin = {
+      winner: result.winner!,
+      netWorth: result.netWorth,
+      turn: state.turn,
+      suppressFuture: false,
+    };
+    // Game continues — fall through to generate events and advance turn
+  }
+
+  // 12. Generate upcoming macro events (only if game is still playing)
   generateUpcomingEvents(state);
 
-  // 14. Advance turn counter
+  // 13. Advance turn counter
   state.turn += 1;
 
   return { firedEvents, newTurn: state.turn, gameOver: false, winner: null };

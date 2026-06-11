@@ -17,11 +17,12 @@ export default function App() {
   }
 
   if (gameState.phase === "won" || gameState.phase === "lost") {
-    return <GameOverScreen won={gameState.phase === "won"} />;
+    return <GameOverScreen won={gameState.phase === "won"} reason={gameState.phase === "lost" ? "loss" : "win"} />;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {gameState.pendingWin && <WinNotificationOverlay />}
       {/* Top nav */}
       <div style={{
         height: 42,
@@ -113,9 +114,12 @@ function StartScreen({ playerName, setPlayerName, onStart }: {
   );
 }
 
-function GameOverScreen({ won }: { won: boolean }) {
+function GameOverScreen({ won, reason }: { won: boolean; reason: string }) {
   const { startNewGame } = useGameStore();
   const [name, setName] = useState("");
+  const lossMessage = reason === "loss"
+    ? (won ? "" : "Your corporation is bankrupt or time has run out.")
+    : "";
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg)" }}>
       <div style={{ background: "var(--bg-panel)", border: `1px solid ${won ? "var(--gold-dim)" : "var(--border)"}`, borderRadius: 12, padding: 40, width: 360, textAlign: "center" }}>
@@ -124,7 +128,7 @@ function GameOverScreen({ won }: { won: boolean }) {
           {won ? "Victory" : "Game Over"}
         </div>
         <div style={{ color: "var(--text-dim)", fontSize: 13, marginBottom: 24 }}>
-          {won ? "You reached the net worth target." : "Time ran out."}
+          {won ? "You chose to end the game." : lossMessage}
         </div>
         <input style={{ width: "100%", marginBottom: 10 }} placeholder="New corporation name"
           value={name} onChange={(e) => setName(e.target.value)} />
@@ -132,6 +136,56 @@ function GameOverScreen({ won }: { won: boolean }) {
           disabled={!name.trim()} onClick={() => startNewGame(name.trim())}>
           Play Again
         </button>
+      </div>
+    </div>
+  );
+}
+
+function WinNotificationOverlay() {
+  const { gameState, confirmEndGame, keepPlaying } = useGameStore();
+  const pendingWin = gameState?.pendingWin;
+  if (!pendingWin) return null;
+
+  const corp = gameState?.corporations[pendingWin.winner];
+  const nw = pendingWin.netWorth.toLocaleString("en-GB", { maximumFractionDigits: 0 });
+
+  return (
+    <div style={{
+      position: "absolute", inset: 0, zIndex: 100,
+      background: "rgba(0,0,0,0.7)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <div style={{
+        background: "var(--bg-panel)",
+        border: "1px solid var(--gold-dim)",
+        borderRadius: 12, padding: 40, width: 400, textAlign: "center",
+      }}>
+        <div style={{ fontSize: 40, marginBottom: 12 }}>🏆</div>
+        <div style={{ fontWeight: 700, fontSize: 20, color: "var(--gold)", marginBottom: 8 }}>
+          Win condition reached
+        </div>
+        <div style={{ color: "var(--text)", fontSize: 13, marginBottom: 6 }}>
+          {corp?.name} has reached a net worth of €{nw}.
+        </div>
+        <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 28 }}>
+          You can end the game now and claim victory, or keep playing.
+          If you keep playing, this notification will not appear again.
+        </div>
+        <div style={{ display: "flex", gap: 12 }}>
+          <button
+            className="primary"
+            style={{ flex: 1, padding: "10px 0", fontSize: 13 }}
+            onClick={confirmEndGame}
+          >
+            End Game
+          </button>
+          <button
+            style={{ flex: 1, padding: "10px 0", fontSize: 13 }}
+            onClick={keepPlaying}
+          >
+            Keep Playing
+          </button>
+        </div>
       </div>
     </div>
   );

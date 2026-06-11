@@ -64,6 +64,7 @@ export function newGame(playerName: string): GameState {
     eventHistory: [],
     barcodeAvailable: false,
     recessionTurnsRemaining: 0,
+    pendingWin: null,
   };
 
   seedStartingTenders(state);

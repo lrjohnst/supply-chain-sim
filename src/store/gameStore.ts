@@ -34,6 +34,8 @@ interface GameStore {
   buildFirm: (cityNodeId: string, type: "farm" | "factory" | "store", name: string) => string | null;
   setRetailPrice: (firmId: string, product: ProductId, price: number) => void;
   setSellToCompetitors: (firmId: string, enabled: boolean) => void;
+  confirmEndGame: () => void;
+  keepPlaying: () => void;
 }
 
 const FIRM_BUILD_COST: Record<"farm" | "factory" | "store", number> = {
@@ -190,6 +192,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const firm = gameState.firms[firmId];
     if (!firm) return;
     firm.sellToCompetitors = enabled;
+    set({ gameState: { ...gameState } });
+  },
+
+  confirmEndGame: () => {
+    const { gameState } = get();
+    if (!gameState?.pendingWin) return;
+    gameState.phase = "won";
+    gameState.pendingWin = null;
+    set({ gameState: { ...gameState } });
+  },
+
+  keepPlaying: () => {
+    const { gameState } = get();
+    if (!gameState?.pendingWin) return;
+    // Suppress future notifications — win threshold already crossed
+    gameState.pendingWin = { ...gameState.pendingWin, suppressFuture: true };
     set({ gameState: { ...gameState } });
   },
 }));
