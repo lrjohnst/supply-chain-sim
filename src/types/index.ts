@@ -135,7 +135,8 @@ export type InvestmentType =
   | "warehouse_capacity"
   | "training_store";
 
-export type InvestmentStatus = "queued" | "in_progress" | "starting_up" | "complete";
+/** Investment build lifecycle. Startup phase is tracked on ProductionLineSetup, not here. */
+export type InvestmentStatus = "queued" | "in_progress" | "complete";
 
 export interface Investment {
   id: EntityId;
@@ -159,10 +160,26 @@ export type RecipeKey =
 
 export type SourceType = "harbor" | "own_inventory" | "spot_market";
 
+/**
+ * State machine for a single production line instance.
+ * Separate from the Investment lifecycle (build phases live on Investment).
+ *
+ * unconfigured → player picks recipe → starting_up → active (producing)
+ *
+ * Reconfiguring an active line: recipe changes, restarts startup phase.
+ * intentionallyIdle: player dismissed the config gate permanently for this line.
+ */
 export interface ProductionLineSetup {
-  investmentId: EntityId;   // which production_line investment this belongs to
-  recipe: RecipeKey | null; // null = not configured yet
+  investmentId: EntityId;
+  recipe: RecipeKey | null;
   sourceType: SourceType;
+  lineStatus: "unconfigured" | "starting_up" | "active";
+  /** Turns remaining in the startup phase. 0 when not starting_up. */
+  startupTurnsRemaining: number;
+  /** Per-line batch progress counter (replaces shared firm.productionProgress). */
+  progress: number;
+  /** When true, the End Turn gate for this unconfigured line is permanently suppressed. */
+  intentionallyIdle: boolean;
 }
 
 // ============================================================
@@ -296,13 +313,16 @@ export interface Firm {
   inventory: InventoryLine[];
   activeContractIds: EntityId[];
   activeTenderIds: EntityId[];
-  productionProgress: Record<RecipeKey, number>; // per-recipe batch progress
-  // v1.1
   sellToCompetitors: boolean;
-  // Retail price overrides (player-set). Falls back to config benchmark if absent.
+  /** Retail price overrides (player-set). Falls back to config benchmark if absent. */
   retailPrices: Partial<Record<ProductId, number>>;
-  // Sales ramp progress: turns this product has been actively selling at this firm
+  /** Sales ramp progress: turns this product has been actively selling at this firm. */
   salesRampTurns: Partial<Record<ProductId, number>>;
+  /**
+   * Harbor auto-source: store buys exactly estimated demand of this product
+   * from harbor each turn as a spot purchase. Stores only.
+   */
+  harborAutoSource: Partial<Record<ProductId, boolean>>;
 }
 
 // ============================================================

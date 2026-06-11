@@ -290,6 +290,7 @@ export const GameConfig = {
       turnsPerBatch: 1,
       requiresPackaging: true,
       requiresBranding: false,
+      maxBatchSizePerTurn: 200,
     },
     chicken_soup: {
       inputProduct: "raw_chicken" as ProductId,
@@ -299,6 +300,7 @@ export const GameConfig = {
       turnsPerBatch: 1,
       requiresPackaging: true,
       requiresBranding: false,
+      maxBatchSizePerTurn: 200,
     },
     alumina_refining: {
       inputProduct: "bauxite" as ProductId,
@@ -308,6 +310,7 @@ export const GameConfig = {
       turnsPerBatch: 1,
       requiresPackaging: false,
       requiresBranding: false,
+      maxBatchSizePerTurn: 300,
     },
     aluminium_smelting: {
       inputProduct: "alumina" as ProductId,
@@ -317,6 +320,7 @@ export const GameConfig = {
       turnsPerBatch: 2,
       requiresPackaging: false,
       requiresBranding: false,
+      maxBatchSizePerTurn: 150,
     },
     laptop_branding: {
       inputProduct: "laptop_whitelabel" as ProductId,
@@ -326,15 +330,14 @@ export const GameConfig = {
       turnsPerBatch: 1,
       requiresPackaging: false,
       requiresBranding: true,
+      maxBatchSizePerTurn: 100,
     },
   } satisfies Record<RecipeKey, {
     inputProduct: ProductId; inputQuantity: number;
     outputProduct: ProductId; outputQuantity: number;
     turnsPerBatch: number; requiresPackaging: boolean; requiresBranding: boolean;
+    maxBatchSizePerTurn: number;
   }>,
-
-  // Units per production line per turn (input consumed)
-  productionBatchSize: 200,
 
   // ----------------------------------------------------------
   // Loans

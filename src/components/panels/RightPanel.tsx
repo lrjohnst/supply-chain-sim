@@ -3,10 +3,12 @@ import { useGameStore } from "../../store/gameStore";
 import { euros, pct, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
 import { estimatedDemand } from "../../engine/retail";
+import { getBasePrice } from "../../engine/harbor";
+import { getStoreSellableProducts } from "../../engine/harborSpotPurchase";
 import { transportCostToNode, linksToHarbor } from "../../engine/utils";
 import { getHarborSoldProducts } from "../../engine/harbor";
-import { displayName, getProductsHandledBy } from "../../engine/products";
-import type { Firm, FirmType, InvestmentType, ProductId } from "../../types";
+import { displayName, getProductsHandledBy, isSoldByHarbor } from "../../engine/products";
+import type { Firm, FirmType, InvestmentType, ProductId, RecipeKey } from "../../types";
 
 export default function RightPanel() {
   const {
@@ -144,7 +146,12 @@ export default function RightPanel() {
 // ------------------------------------------------------------------
 
 function FirmPanel({ firm }: { firm: Firm }) {
-  const { gameState, buildInvestment, cancelInvestment, addContract, setRetailPrice, setSellToCompetitors } = useGameStore();
+  const {
+    gameState, buildInvestment, cancelInvestment,
+    configureProductionLine, markLineIntentionallyIdle,
+    toggleHarborAutoSource,
+    addContract, setRetailPrice, setSellToCompetitors,
+  } = useGameStore();
   const [invError, setInvError] = useState<string | null>(null);
   const [contractError, setContractError] = useState<string | null>(null);
 
@@ -189,26 +196,48 @@ function FirmPanel({ firm }: { firm: Firm }) {
           <hr />
           <h3 style={{ padding: "0 16px" }}>Investments</h3>
           <div style={{ padding: "4px 16px 8px" }}>
-            {firm.investments.map((inv) => (
-              <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", gap: 6 }}>
-                <span style={{ color: "var(--text)", flex: 1, fontSize: 11 }}>{inv.type.replace(/_/g, " ")}</span>
-                <span className={`tag tag-${inv.status === "complete" ? "green" : inv.status === "starting_up" ? "gold" : "dim"}`}
-                  style={{ flexShrink: 0 }}>
-                  {inv.status === "complete"    ? "✓" :
-                   inv.status === "starting_up" ? `startup ${inv.turnsRemaining}t` :
-                   inv.status === "in_progress" ? `building ${inv.turnsRemaining}t` :
-                   "queued"}
-                </span>
-                {(inv.status === "queued" || inv.status === "in_progress") && (
-                  <button
-                    style={{ fontSize: 10, padding: "1px 6px", color: "var(--danger)", flexShrink: 0 }}
-                    onClick={() => cancelInvestment(firm.id, inv.id)}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ))}
+            {firm.investments.map((inv) => {
+              const lineSetup = inv.type === "production_line"
+                ? firm.productionLines.find((l) => l.investmentId === inv.id)
+                : undefined;
+              return (
+                <div key={inv.id} style={{ marginBottom: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
+                    <span style={{ color: "var(--text)", flex: 1, fontSize: 11 }}>{inv.type.replace(/_/g, " ")}</span>
+                    <span className={`tag tag-${
+                      inv.status !== "complete" ? "dim"
+                      : !lineSetup ? "green"
+                      : lineSetup.lineStatus === "active" ? "green"
+                      : lineSetup.lineStatus === "starting_up" ? "gold"
+                      : "dim"
+                    }`} style={{ flexShrink: 0 }}>
+                      {inv.status === "queued"      ? "queued" :
+                       inv.status === "in_progress" ? `building ${inv.turnsRemaining}t` :
+                       !lineSetup                   ? "✓" :
+                       lineSetup.lineStatus === "active"      ? (lineSetup.recipe?.replace(/_/g, " ") ?? "✓") :
+                       lineSetup.lineStatus === "starting_up" ? `startup ${lineSetup.startupTurnsRemaining}t` :
+                       "idle"}
+                    </span>
+                    {(inv.status === "queued" || inv.status === "in_progress") && (
+                      <button
+                        style={{ fontSize: 10, padding: "1px 6px", color: "var(--danger)", flexShrink: 0 }}
+                        onClick={() => cancelInvestment(firm.id, inv.id)}
+                      >✕</button>
+                    )}
+                  </div>
+                  {/* Production line recipe configuration */}
+                  {lineSetup && inv.status === "complete" && (
+                    <ProductionLineConfig
+                      firmId={firm.id}
+                      investmentId={inv.id}
+                      lineSetup={lineSetup}
+                      onConfigure={(recipe) => configureProductionLine(firm.id, inv.id, recipe)}
+                      onMarkIdle={() => markLineIntentionallyIdle(firm.id, inv.id)}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
@@ -306,12 +335,21 @@ function FirmPanel({ firm }: { firm: Firm }) {
         );
       })()}
 
-      <HarborSourcingSection
-        firm={firm}
-        contractError={contractError}
-        setContractError={setContractError}
-        addContract={addContract}
-      />
+      {firm.type === "store" ? (
+        <StoreHarborSourceSection
+          firm={firm}
+          gameState={gameState}
+          onToggle={(productId, enabled) => toggleHarborAutoSource(firm.id, productId, enabled)}
+          onSetRetailPrice={(productId, price) => setRetailPrice(firm.id, productId, price)}
+        />
+      ) : (
+        <HarborSourcingSection
+          firm={firm}
+          contractError={contractError}
+          setContractError={setContractError}
+          addContract={addContract}
+        />
+      )}
 
       {slotsLeft > 0 && (
         <>
@@ -577,6 +615,159 @@ function getAvailableInvestments(
   return valid
     .filter((type) => type !== "barcode_scanning" || barcodeAvailable)
     .map((type) => ({ type, label: INVESTMENT_LABELS[type] ?? type.replace(/_/g, " ") }));
+}
+
+// ------------------------------------------------------------------
+// Production line recipe configuration widget
+// ------------------------------------------------------------------
+
+const RECIPE_OPTIONS: { key: RecipeKey; label: string }[] = [
+  { key: "chicken",           label: "Chicken processing" },
+  { key: "chicken_soup",      label: "Chicken soup" },
+  { key: "alumina_refining",  label: "Alumina refining" },
+  { key: "aluminium_smelting",label: "Aluminium smelting" },
+  { key: "laptop_branding",   label: "Laptop branding" },
+];
+
+function ProductionLineConfig({
+  firmId, investmentId, lineSetup, onConfigure, onMarkIdle,
+}: {
+  firmId: string;
+  investmentId: string;
+  lineSetup: import("../../types").ProductionLineSetup;
+  onConfigure: (recipe: RecipeKey) => void;
+  onMarkIdle: () => void;
+}) {
+  const [selected, setSelected] = useState<RecipeKey | "">(lineSetup.recipe ?? "");
+
+  if (lineSetup.lineStatus === "starting_up") {
+    return (
+      <div style={{ fontSize: 10, color: "var(--warn)", paddingLeft: 4, marginTop: 2 }}>
+        Commissioning: {lineSetup.startupTurnsRemaining} turn{lineSetup.startupTurnsRemaining !== 1 ? "s" : ""} remaining
+      </div>
+    );
+  }
+
+  if (lineSetup.lineStatus === "active" && lineSetup.recipe) {
+    return (
+      <div style={{ fontSize: 10, color: "var(--text-dim)", paddingLeft: 4, marginTop: 2, display: "flex", gap: 8, alignItems: "center" }}>
+        <span>Recipe: {lineSetup.recipe.replace(/_/g, " ")}</span>
+        <button style={{ fontSize: 10, padding: "1px 6px" }} onClick={() => {
+          setSelected(lineSetup.recipe ?? "");
+        }}>Change</button>
+      </div>
+    );
+  }
+
+  // unconfigured or reconfiguring
+  return (
+    <div style={{ marginTop: 4, paddingLeft: 4, display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ fontSize: 10, color: lineSetup.intentionallyIdle ? "var(--text-dim)" : "var(--warn)" }}>
+        {lineSetup.intentionallyIdle ? "Intentionally idle" : "⚠ Unconfigured — select a recipe"}
+      </div>
+      <div style={{ display: "flex", gap: 4 }}>
+        <select
+          value={selected}
+          onChange={(e) => setSelected(e.target.value as RecipeKey)}
+          style={{ flex: 1, fontSize: 10 }}
+        >
+          <option value="">— select recipe —</option>
+          {RECIPE_OPTIONS.map((r) => (
+            <option key={r.key} value={r.key}>{r.label}</option>
+          ))}
+        </select>
+        <button
+          style={{ fontSize: 10, padding: "2px 8px" }}
+          disabled={!selected}
+          onClick={() => { if (selected) onConfigure(selected as RecipeKey); }}
+        >
+          Start
+        </button>
+      </div>
+      {!lineSetup.intentionallyIdle && (
+        <button style={{ fontSize: 10, padding: "1px 6px", color: "var(--text-dim)" }} onClick={onMarkIdle}>
+          Mark as intentionally idle
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------
+// Store harbor auto-source section (Fix 7)
+// ------------------------------------------------------------------
+
+function StoreHarborSourceSection({
+  firm, gameState, onToggle, onSetRetailPrice,
+}: {
+  firm: Firm;
+  gameState: import("../../types").GameState;
+  onToggle: (productId: ProductId, enabled: boolean) => void;
+  onSetRetailPrice: (productId: ProductId, price: number) => void;
+}) {
+  const sellable    = getStoreSellableProducts(firm);
+  const harborItems = sellable.filter((p) => isSoldByHarbor(p));
+  if (harborItems.length === 0) return null;
+
+  const city = gameState.cityNodes[firm.cityNodeId];
+
+  return (
+    <>
+      <hr />
+      <div style={sectionStyle}>
+        <h3>Harbor sourcing</h3>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>
+          Toggle auto-buy. The game purchases estimated demand each turn at spot price.
+        </div>
+        {harborItems.map((productId) => {
+          const enabled     = firm.harborAutoSource[productId] ?? false;
+          const harborPrice = (gameState.harborNode.prices as Record<string, number>)[productId] ?? getBasePrice(productId);
+          const spotPrice   = harborPrice * (1 + GameConfig.spotPurchasePremium);
+          const retailPrice = firm.retailPrices[productId] ?? GameConfig.retailBenchmarkPrices[productId] ?? 0;
+          const estDemand   = city ? estimatedDemand(city.population, productId, retailPrice) : 0;
+          const estCostPerTurn = estDemand * spotPrice;
+
+          return (
+            <div key={productId} style={{ marginBottom: 12, borderLeft: `2px solid ${enabled ? "var(--accent)" : "var(--border)"}`, paddingLeft: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontWeight: 600, fontSize: 12 }}>{displayName(productId)}</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(e) => onToggle(productId, e.target.checked)}
+                  />
+                  {enabled ? "Auto-buying" : "Off"}
+                </label>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 2 }}>
+                <span>Spot price: <strong style={{ color: "var(--text-head)" }}>{euros(spotPrice)}/u</strong></span>
+                <span>Est. demand: <strong style={{ color: "var(--text-head)" }}>{qty(estDemand)} units/turn</strong></span>
+                {enabled && <span style={{ color: "var(--warn)" }}>Est. cost: ~{euros(estCostPerTurn)}/turn</span>}
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <label style={{ fontSize: 10, color: "var(--text-dim)" }}>Retail price</label>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                  <input
+                    type="number"
+                    style={{ flex: 1, fontSize: 11 }}
+                    value={retailPrice.toFixed(2)}
+                    step={0.1}
+                    min={0.01}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v) && v > 0) onSetRetailPrice(productId, v);
+                    }}
+                  />
+                  <span style={{ fontSize: 10, color: "var(--text-dim)" }}>benchmark {euros(GameConfig.retailBenchmarkPrices[productId] ?? 0)}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
 }
 
 const panelStyle: React.CSSProperties = {

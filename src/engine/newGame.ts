@@ -274,12 +274,9 @@ export function makeFirm(
     inventory: [],
     activeContractIds: [],
     activeTenderIds: [],
-    productionProgress: {
-      chicken: 0, chicken_soup: 0,
-      alumina_refining: 0, aluminium_smelting: 0, laptop_branding: 0,
-    },
     sellToCompetitors: false,
     retailPrices: {},
     salesRampTurns: {},
+    harborAutoSource: {},
   };
 }

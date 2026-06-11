@@ -3,11 +3,16 @@ import type { GameState, CorporateBooks, ProductId } from "../types";
 import { newGame, makeFirm } from "../engine/newGame";
 import { tick, type TickResult } from "../engine/tick";
 import { computeCorporateBooks } from "../engine/books";
-import { startInvestment, cancelInvestment as engineCancelInvestment } from "../engine/investments";
+import {
+  startInvestment,
+  cancelInvestment as engineCancelInvestment,
+  configureProductionLine as engineConfigureLine,
+  markLineIntentionallyIdle as engineMarkLineIdle,
+} from "../engine/investments";
 import { takeLoan } from "../engine/loans";
 import { createContract } from "../engine/contracts";
 import { submitTenderBid } from "../engine/tenders";
-import type { InvestmentType, Contract } from "../types";
+import type { InvestmentType, Contract, RecipeKey, ProductId } from "../types";
 import type { AppNotification, GateAction } from "./notificationTypes";
 import { GameConfig } from "../config/gameConfig";
 
@@ -44,6 +49,9 @@ interface GameStore {
   // Actions — firm management
   buildInvestment: (firmId: string, type: InvestmentType) => string | null;
   cancelInvestment: (firmId: string, investmentId: string) => string | null;
+  configureProductionLine: (firmId: string, investmentId: string, recipe: RecipeKey) => string | null;
+  markLineIntentionallyIdle: (firmId: string, investmentId: string) => string | null;
+  toggleHarborAutoSource: (firmId: string, productId: ProductId, enabled: boolean) => void;
   buildFirm: (cityNodeId: string, type: "farm" | "factory" | "store", name: string) => string | null;
   setRetailPrice: (firmId: string, product: ProductId, price: number) => void;
   setSellToCompetitors: (firmId: string, enabled: boolean) => void;
@@ -179,6 +187,59 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ];
     }
 
+    // Unconfigured production line gate
+    // Fires once per unconfigured line per turn until configured or marked idle.
+    // Uses stable gate ID so duplicates are not added across turns.
+    // Note: store section gate (grocery_section, electronics_section, etc.) is deferred — see TODO.
+    // TODO Post-MVP: add gate for store sections needing sourcing + price configuration.
+    const playerCorp2 = Object.values(gameState.corporations).find((c) => c.isPlayer);
+    if (playerCorp2) {
+      for (const firmId of playerCorp2.firmIds) {
+        const firm = gameState.firms[firmId];
+        for (const inv of firm.investments) {
+          if (inv.status !== "complete" || inv.type !== "production_line") continue;
+          const line = firm.productionLines.find((l) => l.investmentId === inv.id);
+          if (!line || line.lineStatus !== "unconfigured" || line.intentionallyIdle) continue;
+
+          const stableGateId = `gate-unconfigured-${inv.id}`;
+          if (newGateActions.some((g) => g.id === stableGateId)) continue; // already queued
+
+          const capturedFirmId = firmId;
+          const capturedInvId  = inv.id;
+          const capturedFirmName = firm.name;
+
+          newGateActions.push({
+            id: stableGateId,
+            message: `Your ${capturedFirmName} has an unconfigured Production line. Would you like to configure it now or leave it idle?`,
+            options: [
+              {
+                label: "Configure Now",
+                handler: () => {
+                  get().selectFirm(capturedFirmId);
+                  get().resolveGateAction(stableGateId, "Configure Now");
+                },
+                style: "primary" as const,
+              },
+              {
+                label: "Leave Idle",
+                handler: () => get().resolveGateAction(stableGateId, "Leave Idle"),
+                style: "default" as const,
+              },
+              {
+                label: "Mark as Intentionally Idle",
+                handler: () => {
+                  const { gameState: gs } = get();
+                  if (gs) { engineMarkLineIdle(gs, capturedFirmId, capturedInvId); set({ gameState: { ...gs } }); }
+                  get().resolveGateAction(stableGateId, "Mark as Intentionally Idle");
+                },
+                style: "default" as const,
+              },
+            ],
+          });
+        }
+      }
+    }
+
     set((s) => ({
       gameState: { ...gameState },
       lastTickResult: result,
@@ -219,6 +280,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const err = engineCancelInvestment(gameState, firmId, investmentId);
     if (!err) set({ gameState: { ...gameState } });
     return err;
+  },
+
+  configureProductionLine: (firmId, investmentId, recipe) => {
+    const { gameState } = get();
+    if (!gameState) return "No active game.";
+    const err = engineConfigureLine(gameState, firmId, investmentId, recipe);
+    if (!err) set({ gameState: { ...gameState } });
+    return err;
+  },
+
+  markLineIntentionallyIdle: (firmId, investmentId) => {
+    const { gameState } = get();
+    if (!gameState) return "No active game.";
+    const err = engineMarkLineIdle(gameState, firmId, investmentId);
+    if (!err) set({ gameState: { ...gameState } });
+    return err;
+  },
+
+  toggleHarborAutoSource: (firmId, productId, enabled) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const firm = gameState.firms[firmId];
+    if (!firm) return;
+    firm.harborAutoSource[productId] = enabled;
+    set({ gameState: { ...gameState } });
   },
 
   buildFirm: (cityNodeId, type, name) => {

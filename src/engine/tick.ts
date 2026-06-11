@@ -6,6 +6,7 @@ import { advanceInvestments, type PausedInvestmentInfo } from "./investments";
 import { runProduction } from "./production";
 import { executeContracts } from "./contracts";
 import { evaluateTenders } from "./tenders";
+import { runHarborSpotPurchases } from "./harborSpotPurchase";
 import { runRetailSales } from "./retail";
 import { processLoans } from "./loans";
 import { deductOperatingCosts, updateQuality } from "./operatingCosts";
@@ -41,7 +42,8 @@ export interface TickResult {
  *  4.  Run farm/factory production
  *  5.  Execute active contracts          ← bankruptcy check
  *  6.  Evaluate closing tenders
- *  7.  Run retail (B2C) sales
+ *  7.  Harbor spot purchases for stores  ← bankruptcy check
+ *  8.  Run retail (B2C) sales
  *  8.  Process loans                     ← bankruptcy check
  *  9.  Deduct operating costs            ← bankruptcy check
  *  10. Update firm quality
@@ -69,6 +71,7 @@ export function tick(state: GameState): TickResult {
   try {
     executeContracts(state);
     evaluateTenders(state);
+    runHarborSpotPurchases(state);
     retailData = runRetailSales(state);
     processLoans(state);
     deductOperatingCosts(state);

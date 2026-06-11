@@ -1,8 +1,7 @@
-import type { GameState, Firm, Investment, InvestmentType } from "../types";
+import type { GameState, Firm, Investment, InvestmentType, RecipeKey } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
 import { postTransaction } from "./ledger";
-import { displayName as productDisplayName } from "./products";
 
 // TODO Post-MVP: End Turn gate prompt when investment completes and firm has no queued successor.
 
@@ -21,19 +20,20 @@ export interface PausedInvestmentInfo {
 // ============================================================
 
 /**
- * Advance all investments by one turn. Called at step 3 of the tick.
+ * Advance all investments and production line startup phases.
+ * Called at step 3 of the tick, before production.
  *
- * Lifecycle per investment this tick:
- *   queued      → in_progress (automatic; first payment taken same tick)
- *   in_progress → in_progress (payment deducted; turnsRemaining decremented)
- *               → starting_up (when turnsRemaining reaches 0; production lines only)
- *               → complete    (when turnsRemaining reaches 0; non-production-line)
- *               → paused for this tick if cash insufficient (no progress, no payment)
- *   starting_up → starting_up (turnsRemaining decremented; no payment)
- *               → complete    (when turnsRemaining reaches 0)
+ * Investment lifecycle:
+ *   queued → in_progress (first payment taken same tick)
+ *   in_progress → complete (one payment per turn; pauses if cash insufficient)
  *
- * Returns information about any player investments that paused due to
- * insufficient funds, so tick.ts can surface them as notifications.
+ * When a production_line investment completes, an unconfigured ProductionLineSetup
+ * is automatically added to firm.productionLines.
+ *
+ * Production line startup (separate state machine on ProductionLineSetup):
+ *   starting_up → active (decrements each turn)
+ *
+ * Returns player investment pauses for notification.
  * AI pauses are silent.
  */
 export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
@@ -44,7 +44,7 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
 
     for (const inv of firm.investments) {
 
-      // ---- queued → in_progress (then fall through to take first payment) ----
+      // ---- queued → in_progress (first payment taken this same tick) ----
       if (inv.status === "queued") {
         inv.status = "in_progress";
       }
@@ -60,18 +60,12 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
           : Math.round((totalCost / buildTurns) * 100) / 100;
 
         if (corp.cash < perTurnPayment) {
-          // Insufficient funds — pause this turn (no progress, no payment).
           if (corp.isPlayer) {
-            paused.push({
-              firmId:         firm.id,
-              firmName:       firm.name,
-              investmentType: inv.type,
-            });
+            paused.push({ firmId: firm.id, firmName: firm.name, investmentType: inv.type });
           }
-          continue;
+          continue; // pause — no progress, no payment
         }
 
-        // Deduct payment via ledger (also adjusts corp.cash).
         postTransaction({
           state,
           turn:          state.turn,
@@ -89,24 +83,32 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
         inv.turnsRemaining -= 1;
 
         if (inv.turnsRemaining <= 0) {
-          if (inv.type === "production_line") {
-            // Production lines commission before going active.
-            inv.status         = "starting_up";
-            inv.turnsRemaining = GameConfig.investments.productionLineStartupTurns;
-          } else {
-            inv.status         = "complete";
-            inv.turnsRemaining = 0;
-          }
-        }
-        continue;
-      }
-
-      // ---- starting_up: count down, no payments ----
-      if (inv.status === "starting_up") {
-        inv.turnsRemaining -= 1;
-        if (inv.turnsRemaining <= 0) {
           inv.status         = "complete";
           inv.turnsRemaining = 0;
+
+          // Production lines: add an unconfigured line setup for the player to configure.
+          if (inv.type === "production_line") {
+            firm.productionLines.push({
+              investmentId:          inv.id,
+              recipe:                null,
+              sourceType:            "harbor",
+              lineStatus:            "unconfigured",
+              startupTurnsRemaining: 0,
+              progress:              0,
+              intentionallyIdle:     false,
+            });
+          }
+        }
+      }
+    }
+
+    // ---- Production line startup phase advancement ----
+    for (const line of firm.productionLines) {
+      if (line.lineStatus === "starting_up") {
+        line.startupTurnsRemaining -= 1;
+        if (line.startupTurnsRemaining <= 0) {
+          line.lineStatus            = "active";
+          line.startupTurnsRemaining = 0;
         }
       }
     }
@@ -120,9 +122,8 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
 // ============================================================
 
 /**
- * Queue a new investment on a firm.
- * No payment is taken. The investment can be cancelled penalty-free while queued.
- * Returns an error string on failure, null on success.
+ * Queue a new investment on a firm. No payment taken.
+ * Returns error string on failure, null on success.
  */
 export function startInvestment(
   state: GameState,
@@ -132,23 +133,20 @@ export function startInvestment(
   const firm = state.firms[firmId];
   if (!firm) return "Firm not found.";
 
-  const corp = state.corporations[firm.corporationId];
-
   // ---- Firm-type compatibility ----
   const validForFirm = (GameConfig.validInvestments[firm.type] as InvestmentType[]);
   if (!validForFirm.includes(type)) {
     return `${type.replace(/_/g, " ")} is not a valid investment for a ${firm.type}.`;
   }
 
-  // ---- Slot limit (queued + in_progress + starting_up + complete all consume slots) ----
+  // ---- Slot limit (all statuses consume a slot) ----
   if (firm.investments.length >= GameConfig.firmInvestmentSlotLimit) {
     return "No investment slots remaining in this firm.";
   }
 
   // ---- Max-per-firm ----
-  const maxAllowed   = GameConfig.investments.maxPerFirm[type];
   const existingCount = firm.investments.filter((i) => i.type === type).length;
-  if (existingCount >= maxAllowed) {
+  if (existingCount >= GameConfig.investments.maxPerFirm[type]) {
     return `Maximum number of ${type.replace(/_/g, " ")} investments already built.`;
   }
 
@@ -157,15 +155,14 @@ export function startInvestment(
     return "Barcode scanning is not yet available.";
   }
 
-  const inv: Investment = {
+  firm.investments.push({
     id:             generateId(),
     type,
     status:         "queued",
     turnsRemaining: GameConfig.investments.buildTurns[type],
-    costPaid:       0,   // payments begin when the investment transitions to in_progress
-  };
+    costPaid:       0,
+  });
 
-  firm.investments.push(inv);
   return null;
 }
 
@@ -175,8 +172,7 @@ export function startInvestment(
 
 /**
  * Cancel a queued or in_progress investment. Sunk payments are not refunded.
- * starting_up and complete investments cannot be cancelled.
- * Returns an error string on failure, null on success.
+ * complete investments cannot be cancelled.
  */
 export function cancelInvestment(
   state: GameState,
@@ -190,17 +186,10 @@ export function cancelInvestment(
   if (idx === -1) return "Investment not found.";
 
   const inv = firm.investments[idx];
-
-  if (inv.status === "starting_up") {
-    return "Cannot cancel: investment is commissioning. All payments are complete.";
-  }
-  if (inv.status === "complete") {
-    return "Cannot cancel a completed investment.";
-  }
+  if (inv.status === "complete") return "Cannot cancel a completed investment.";
 
   firm.investments.splice(idx, 1);
 
-  // Remove associated production line config if applicable.
   if (inv.type === "production_line") {
     firm.productionLines = firm.productionLines.filter(
       (pl) => pl.investmentId !== inv.id
@@ -211,10 +200,77 @@ export function cancelInvestment(
 }
 
 // ============================================================
+// Configure / manage production lines
+// ============================================================
+
+/**
+ * Assign a recipe to a completed production line.
+ * Begins the startup phase. If the line was already active, restarts startup.
+ * Returns error string on failure, null on success.
+ */
+export function configureProductionLine(
+  state: GameState,
+  firmId: string,
+  investmentId: string,
+  recipe: RecipeKey
+): string | null {
+  const firm = state.firms[firmId];
+  if (!firm) return "Firm not found.";
+
+  const inv = firm.investments.find(
+    (i) => i.id === investmentId && i.type === "production_line"
+  );
+  if (!inv) return "Production line investment not found.";
+  if (inv.status !== "complete") return "Production line is not yet built.";
+
+  let line = firm.productionLines.find((l) => l.investmentId === investmentId);
+  if (!line) {
+    // Guard: should have been created when investment completed
+    line = {
+      investmentId,
+      recipe:                null,
+      sourceType:            "harbor",
+      lineStatus:            "unconfigured",
+      startupTurnsRemaining: 0,
+      progress:              0,
+      intentionallyIdle:     false,
+    };
+    firm.productionLines.push(line);
+  }
+
+  line.recipe                = recipe;
+  line.lineStatus            = "starting_up";
+  line.startupTurnsRemaining = GameConfig.investments.productionLineStartupTurns;
+  line.progress              = 0; // reset batch progress on (re)configuration
+  line.intentionallyIdle     = false;
+
+  return null;
+}
+
+/**
+ * Mark a production line as intentionally idle.
+ * Suppresses the unconfigured gate permanently until the player configures a recipe.
+ */
+export function markLineIntentionallyIdle(
+  state: GameState,
+  firmId: string,
+  investmentId: string
+): string | null {
+  const firm = state.firms[firmId];
+  if (!firm) return "Firm not found.";
+
+  const line = firm.productionLines.find((l) => l.investmentId === investmentId);
+  if (!line) return "Production line not found.";
+
+  line.intentionallyIdle = true;
+  return null;
+}
+
+// ============================================================
 // Read helpers
 // ============================================================
 
-/** True only if the investment is fully complete and active. */
+/** True only when the investment is fully complete. */
 export function hasInvestment(firm: Firm, type: InvestmentType): boolean {
   return firm.investments.some((i) => i.type === type && i.status === "complete");
 }
