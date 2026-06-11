@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { euros, pct, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
-import { estimatedDemand } from "../../engine/retail";
+import { estimatedDemand, computeRampFraction } from "../../engine/retail";
 import { getBasePrice } from "../../engine/harbor";
 import { getStoreSellableProducts } from "../../engine/harborSpotPurchase";
 import { transportCostToNode, linksToHarbor } from "../../engine/utils";
@@ -295,19 +295,23 @@ function FirmPanel({ firm }: { firm: Firm }) {
               <h3>Retail prices</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
                 {sellable.map((product) => {
-                  const benchmark = GameConfig.retailBenchmarkPrices[product as ProductId] ?? 0;
-                  const current = firm.retailPrices[product as ProductId] ?? benchmark;
-                  const demand = city ? estimatedDemand(city.population, product as ProductId, current) : 0;
-                  const maxDemand = city ? estimatedDemand(city.population, product as ProductId, benchmark) : 0;
+                  const benchmark   = GameConfig.retailBenchmarkPrices[product as ProductId] ?? 0;
+                  const current     = firm.retailPrices[product as ProductId] ?? benchmark;
+                  const marketSize  = city ? estimatedDemand(city.population, product as ProductId, current) : 0;
+                  const rampProgress = firm.salesRampProgress[product as ProductId] ?? 0;
+                  const rampPct      = Math.round(computeRampFraction(rampProgress) * 100);
                   return (
                     <div key={product}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
                         <span style={{ fontSize: 11, color: "var(--text)" }}>
                           {displayName(product as ProductId)}
                         </span>
                         <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                          est. {qty(demand)} / {qty(maxDemand)} units
+                          Market size: {qty(marketSize)} units
                         </span>
+                      </div>
+                      <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 3 }}>
+                        Your store is currently reaching {rampPct}% of this market
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                         <input
@@ -789,7 +793,7 @@ function StoreHarborSourceSection({
               )}
               <div style={{ fontSize: 11, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 2 }}>
                 <span>Spot price: <strong style={{ color: "var(--text-head)" }}>{euros(spotPrice)}/u</strong></span>
-                <span>Est. demand: <strong style={{ color: "var(--text-head)" }}>{qty(estDemand)} units/turn</strong></span>
+                <span>Market size: <strong style={{ color: "var(--text-head)" }}>{qty(estDemand)} units/turn</strong></span>
                 {enabled && <span style={{ color: "var(--warn)" }}>Est. cost: ~{euros(estCostPerTurn)}/turn</span>}
               </div>
               <div style={{ marginTop: 6 }}>

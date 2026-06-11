@@ -21,10 +21,45 @@ export interface RetailTickData {
 }
 
 // ============================================================
+// Ramp S-curve
+// ============================================================
+
+/**
+ * Convert a ramp progress float into a demand multiplier using a logistic S-curve.
+ *
+ * f(progress) = 1 / (1 + exp(-kSteepness × (progress − midpointProgress))
+ *
+ * At progress=0:  ~10% of full demand
+ * At progress=15: ~50% of full demand (midpoint)
+ * At progress=25: ~80% of full demand
+ * At progress=40: ~97% of full demand
+ *
+ * Exported for use in UI (market size percentage display).
+ */
+export function computeRampFraction(progress: number): number {
+  const { kSteepness, midpointProgress } = GameConfig.salesRamp;
+  return 1 / (1 + Math.exp(-kSteepness * (progress - midpointProgress)));
+}
+
+// ============================================================
 // Main entry point
 // ============================================================
 
-/** Run B2C retail sales for all stores. Returns tick data for snapshot. */
+/**
+ * Run B2C retail sales for all stores. Returns tick data for snapshot.
+ *
+ * Demand calculation order per product per turn:
+ *   1. Base demand (population × perCapitaDemandRate)
+ *   2. Ramp fraction  (S-curve on salesRampProgress)
+ *   3. Elasticity multiplier
+ *   4. Marketing multiplier
+ *   5. Barcode multiplier
+ *   6. Recession displacement (applied on already-multiplied demand)
+ *   7. Noise term (drawn last, proportional to post-recession demand)
+ *
+ * Ramp progress advances by unitsSold / fullRampDemand (0–1 per turn).
+ * Zero inventory resets ramp progress to 0 (full stockout penalty).
+ */
 export function runRetailSales(state: GameState): RetailTickData {
   const tickData: RetailTickData = {
     effectiveDemand: {},
@@ -34,25 +69,21 @@ export function runRetailSales(state: GameState): RetailTickData {
   };
 
   // ---- Recession tick ----
-  let recessionDisplacementFraction = 0; // applied as: baseDemand * fraction (negative)
+  let recessionSeverityThisTurn = 0; // 0 = no recession
 
   if (state.recessionTurnsRemaining > 0) {
-    // Wobble the severity slightly each turn
-    const recCfg = GameConfig.recessionEvents;
+    const recCfg        = GameConfig.recessionEvents;
     const severityNoise = sampleNormal(0, recCfg.severityNoiseStdDev);
     const effectiveSeverity = clamp(state.recessionSeverity + severityNoise, 0, 1);
 
-    tickData.recessionNoiseTerm = severityNoise;
+    tickData.recessionNoiseTerm         = severityNoise;
     tickData.recessionEffectiveSeverity = effectiveSeverity;
-
-    // displacement fraction = severity - 1 (negative, reduces demand)
-    recessionDisplacementFraction = effectiveSeverity - 1;
+    recessionSeverityThisTurn           = effectiveSeverity;
 
     state.recessionTurnsRemaining -= 1;
     if (state.recessionTurnsRemaining === 0) {
-      // Recession just ended — start cooldown, clear severity
       state.recessionCooldownRemaining = GameConfig.recessionEvents.cooldownTurns;
-      state.recessionSeverity = 0;
+      state.recessionSeverity          = 0;
     }
   } else if (state.recessionCooldownRemaining > 0) {
     state.recessionCooldownRemaining -= 1;
@@ -65,21 +96,21 @@ export function runRetailSales(state: GameState): RetailTickData {
     const cityNode = state.cityNodes[firm.cityNodeId];
     if (!cityNode) continue;
 
-    const corporation = state.corporations[firm.corporationId];
-    const marketingMultiplier = computeMarketingMultiplier(
-      corporation.marketingBudgetPerTurn
-    );
-    const barcodeMultiplier =
-      state.barcodeAvailable && hasInvestment(firm, "barcode_scanning") ? 1.05 : 1.0;
+    const corporation       = state.corporations[firm.corporationId];
+    const marketingMult     = computeMarketingMultiplier(corporation.marketingBudgetPerTurn);
+    const barcodeMult       = state.barcodeAvailable && hasInvestment(firm, "barcode_scanning")
+                               ? 1.05 : 1.0;
 
     tickData.effectiveDemand[firm.id] = {};
     tickData.demandNoiseTerm[firm.id] = {};
 
     for (const product of getSellableProducts(firm)) {
       const available = inventoryQuantity(firm.inventory, product);
+
+      // Stockout: full ramp reset
       if (available <= 0) {
-        if (firm.salesRampTurns[product] !== undefined) {
-          firm.salesRampTurns[product] = 0;
+        if (firm.salesRampProgress[product] !== undefined) {
+          firm.salesRampProgress[product] = 0;
         }
         continue;
       }
@@ -88,54 +119,53 @@ export function runRetailSales(state: GameState): RetailTickData {
       if (!benchmarkPrice || benchmarkPrice <= 0) continue;
       const retailPrice = firm.retailPrices[product] ?? benchmarkPrice;
 
-      // Elasticity multiplier
-      const elasticity = GameConfig.retailElasticity[product] ?? 0;
-      const priceDeltaPct = ((retailPrice - benchmarkPrice) / benchmarkPrice) * 100;
-      const elasticityMultiplier = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
-
-      // Base demand
+      // Step 1: Base demand
       const baseDemand = computeBaseDemand(cityNode.population, product);
       if (baseDemand <= 0) continue;
 
-      // Sales ramp
-      const rampTurns = getRampTurns(product);
-      const currentRamp = firm.salesRampTurns[product] ?? 0;
-      const rampFraction =
-        rampTurns > 0
-          ? Math.min(
-              1,
-              GameConfig.salesRamp.rampStartFraction +
-                (1 - GameConfig.salesRamp.rampStartFraction) * (currentRamp / rampTurns)
-            )
-          : 1;
+      // Step 2: Ramp fraction
+      const currentProgress = firm.salesRampProgress[product] ?? 0;
+      const rampFraction    = computeRampFraction(currentProgress);
 
-      // Multiplier-adjusted demand (before recession and noise)
-      const adjustedDemand =
-        baseDemand * elasticityMultiplier * rampFraction * marketingMultiplier * barcodeMultiplier;
+      // Step 3: Elasticity
+      const elasticity      = GameConfig.retailElasticity[product] ?? 0;
+      const priceDeltaPct   = ((retailPrice - benchmarkPrice) / benchmarkPrice) * 100;
+      const elasticityMult  = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
 
-      // Recession displacement (negative; 0 when no recession)
-      const recessionDisplacement = baseDemand * recessionDisplacementFraction;
+      // Steps 2–5 combined
+      const afterMultipliers = baseDemand * rampFraction * elasticityMult * marketingMult * barcodeMult;
 
-      // Permanent noise term — always drawn, regardless of recession
-      const noise = sampleNormal(0, GameConfig.demand.noiseStdDev * baseDemand);
+      // Step 6: Recession displacement (on already-multiplied demand)
+      const recessionDisplacement = recessionSeverityThisTurn > 0
+        ? afterMultipliers * (recessionSeverityThisTurn - 1)  // negative
+        : 0;
+      const afterRecession = afterMultipliers + recessionDisplacement;
 
-      // Effective demand — floor, minimum 0
-      const effectiveDemand = Math.max(
-        0,
-        Math.floor(adjustedDemand + recessionDisplacement + noise)
-      );
+      // Step 7: Noise — proportional to post-recession demand magnitude
+      const noise = sampleNormal(0, GameConfig.demand.noiseStdDev * Math.max(0, afterRecession));
+
+      const effectiveDemand = Math.max(0, Math.floor(afterRecession + noise));
 
       tickData.effectiveDemand[firm.id][product as ProductId] = effectiveDemand;
       tickData.demandNoiseTerm[firm.id][product as ProductId] = noise;
 
       const sold = Math.min(available, effectiveDemand);
-      if (sold <= 0) {
-        firm.salesRampTurns[product] = currentRamp + 1;
-        continue;
-      }
 
-      // Advance ramp
-      firm.salesRampTurns[product] = currentRamp + 1;
+      // Ramp progress advancement — weighted by demand satisfaction
+      // fullRampDemand = what demand would be at ramp=1 (without ramp fraction),
+      // with all other multipliers including current recession state.
+      const fullRampDemand = Math.max(
+        1,
+        Math.floor(baseDemand * elasticityMult * marketingMult * barcodeMult
+          + (recessionSeverityThisTurn > 0
+            ? baseDemand * elasticityMult * marketingMult * barcodeMult * (recessionSeverityThisTurn - 1)
+            : 0))
+      );
+      // sold=0 but available>0 means we had stock but no buyers — advance by 0
+      const progressAdvance = sold > 0 ? sold / fullRampDemand : 0;
+      firm.salesRampProgress[product] = currentProgress + progressAdvance;
+
+      if (sold <= 0) continue;
 
       const { removed, unitCost } = removeFromInventory(firm.inventory, product, sold);
       if (removed <= 0) continue;
@@ -145,30 +175,29 @@ export function runRetailSales(state: GameState): RetailTickData {
 
       postTransaction({
         state,
-        turn: state.turn,
-        firmId: firm.id,
+        turn:          state.turn,
+        firmId:        firm.id,
         corporationId: firm.corporationId,
-        category: "revenue",
-        counterparty: "Retail consumers",
-        product: product as ProductId,
-        quantity: removed,
-        unitPrice: retailPrice,
-        total: revenue,
+        category:      "revenue",
+        counterparty:  "Retail consumers",
+        product:       product as ProductId,
+        quantity:      removed,
+        unitPrice:     retailPrice,
+        total:         revenue,
       });
 
-      // COGS: P&L-only entry — cash already left when goods were purchased.
       if (unitCost > 0) {
         postTransaction({
           state,
-          turn: state.turn,
-          firmId: firm.id,
+          turn:          state.turn,
+          firmId:        firm.id,
           corporationId: firm.corporationId,
-          category: "input_cost",
-          counterparty: "Cost of goods sold",
-          product: product as ProductId,
-          quantity: removed,
-          unitPrice: unitCost,
-          total: 0,
+          category:      "input_cost",
+          counterparty:  "Cost of goods sold",
+          product:       product as ProductId,
+          quantity:      removed,
+          unitPrice:     unitCost,
+          total:         0,
         });
       }
 
@@ -189,16 +218,13 @@ function getSellableProducts(
   const products: string[] = [];
   const has = (t: string) =>
     firm.investments.some((i) => i.type === t && i.status === "complete");
-  if (has("grocery_section"))
-    products.push("chicken", "chicken_soup", "ice_cream_strawberry");
+  if (has("grocery_section"))     products.push("chicken", "chicken_soup", "ice_cream_strawberry");
   if (has("electronics_section")) products.push("laptop_branded", "printer_branded");
   return products;
 }
 
 function computeBaseDemand(population: number, product: string): number {
-  const perCapita = (
-    GameConfig.consumerDemand.perCapitaDemand as Record<string, number>
-  )[product];
+  const perCapita = (GameConfig.consumerDemand.perCapitaDemand as Record<string, number>)[product];
   return perCapita ? Math.floor(population * perCapita) : 0;
 }
 
@@ -209,13 +235,11 @@ function computeMarketingMultiplier(budgetPerTurn: number): number {
   );
 }
 
-function getRampTurns(product: string): number {
-  const electronics = ["laptop_branded", "printer_branded"];
-  if (electronics.includes(product)) return GameConfig.salesRamp.rampTurns.electronics;
-  return GameConfig.salesRamp.rampTurns.grocery;
-}
-
-/** Compute estimated demand at a node for a product at a given price. Used for UI hints. */
+/**
+ * Market size: fully-ramped demand at the given price.
+ * Applies elasticity only — no ramp, marketing, barcode, or recession.
+ * Used for the UI "Market size" hint: the ceiling the player is growing toward.
+ */
 export function estimatedDemand(
   population: number,
   product: ProductId,
@@ -225,24 +249,25 @@ export function estimatedDemand(
   if (base === 0) return 0;
   const benchmark = GameConfig.retailBenchmarkPrices[product];
   if (!benchmark || !retailPrice) return base;
-  const elasticity = GameConfig.retailElasticity[product] ?? 0;
+  const elasticity    = GameConfig.retailElasticity[product] ?? 0;
   const priceDeltaPct = ((retailPrice - benchmark) / benchmark) * 100;
-  const elasticityMultiplier = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
-  return Math.floor(base * elasticityMultiplier);
+  const elasticityMult = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
+  return Math.floor(base * elasticityMult);
 }
 
 /**
- * Full deterministic demand for a firm/product combination this turn.
- * Includes all multipliers (ramp, elasticity, marketing, barcode, recession)
- * but excludes the per-turn noise term.
+ * Full deterministic demand for a firm/product this turn.
+ * Follows the same order as runRetailSales (steps 1–6) but excludes the
+ * noise term (step 7).
  *
- * Used by harborSpotPurchase to determine exactly how much to buy.
- * The actual sold quantity in runRetailSales will differ slightly due to
- * the noise term — this is a known simplification. Post-MVP: a proper
- * inventory buffer system will decouple purchase quantity from demand estimate.
+ * Used by harborSpotPurchase to determine how many units to buy.
+ * The actual sold quantity will differ slightly due to noise — this is a
+ * known accepted simplification for MVP. Post-MVP: an inventory buffer
+ * system will decouple purchase quantity from demand estimate.
  *
- * Recession displacement uses state.recessionSeverity directly (no per-turn
- * severity noise wobble), since that noise is only drawn inside runRetailSales.
+ * Recession: uses state.recessionSeverity directly (no per-turn severity
+ * noise wobble). The wobble is only drawn inside runRetailSales. The slight
+ * mismatch during recessions is intentionally excluded here and accepted.
  */
 export function computeFullDeterministicDemand(
   state: GameState,
@@ -261,34 +286,28 @@ export function computeFullDeterministicDemand(
 
   const corp = state.corporations[firm.corporationId];
 
-  // Elasticity
-  const elasticity      = GameConfig.retailElasticity[product] ?? 0;
-  const priceDeltaPct   = ((retailPrice - benchmark) / benchmark) * 100;
-  const elasticityMult  = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
+  // Step 2: Ramp
+  const progress     = firm.salesRampProgress[product] ?? 0;
+  const rampFraction = computeRampFraction(progress);
 
-  // Sales ramp
-  const rampTurns   = getRampTurns(product);
-  const currentRamp = firm.salesRampTurns[product] ?? 0;
-  const rampFraction = rampTurns > 0
-    ? Math.min(1, GameConfig.salesRamp.rampStartFraction +
-        (1 - GameConfig.salesRamp.rampStartFraction) * (currentRamp / rampTurns))
-    : 1;
+  // Step 3: Elasticity
+  const elasticity     = GameConfig.retailElasticity[product] ?? 0;
+  const priceDeltaPct  = ((retailPrice - benchmark) / benchmark) * 100;
+  const elasticityMult = Math.max(0.1, 1 - (elasticity * priceDeltaPct) / 100);
 
-  // Marketing
+  // Steps 4–5: Marketing + barcode
   const marketingMult = computeMarketingMultiplier(corp.marketingBudgetPerTurn);
-
-  // Barcode
-  const barcodeMult = state.barcodeAvailable &&
+  const barcodeMult   = state.barcodeAvailable &&
     firm.investments.some((i) => i.type === "barcode_scanning" && i.status === "complete")
     ? 1.05 : 1.0;
 
-  // Recession displacement (deterministic severity, no noise wobble)
+  // Steps 2–5 combined
+  const afterMultipliers = base * rampFraction * elasticityMult * marketingMult * barcodeMult;
+
+  // Step 6: Recession displacement (deterministic severity, no noise wobble)
   const recessionDisplacement = state.recessionTurnsRemaining > 0
-    ? base * (state.recessionSeverity - 1)
+    ? afterMultipliers * (state.recessionSeverity - 1)
     : 0;
 
-  const full = base * elasticityMult * rampFraction * marketingMult * barcodeMult
-             + recessionDisplacement;
-
-  return Math.max(0, Math.floor(full));
+  return Math.max(0, Math.floor(afterMultipliers + recessionDisplacement));
 }

@@ -276,7 +276,7 @@ export function makeFirm(
     activeTenderIds: [],
     sellToCompetitors: false,
     retailPrices: {},
-    salesRampTurns: {},
+    salesRampProgress: {},
     harborAutoSource: {},
   };
 }

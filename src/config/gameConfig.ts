@@ -276,16 +276,25 @@ export const GameConfig = {
   } satisfies Record<ProductId, number>,
 
   // ----------------------------------------------------------
-  // Sales ramp curve
-  // A new product starts at rampStartFraction of max demand.
-  // It reaches full demand after rampTurns turns (linear for MVP).
+  // Sales ramp — logistic S-curve
+  //
+  // rampFraction = 1 / (1 + exp(-kSteepness × (progress - midpointProgress)))
+  //
+  // progress is a float that advances by (unitsSold / fullRampDemand) each turn.
+  // At progress=0 the curve yields ~10% of full demand.
+  // Target shape (at perfect weekly sales):
+  //   progress 5  → ~20% demand
+  //   progress 15 → ~50% demand  (midpoint)
+  //   progress 25 → ~80% demand
+  //   progress 40 → ~97% demand
+  //
+  // Post-MVP: ramp steepness and midpoint are the primary levers for
+  // difficulty scaling. Steeper curves and harsher stockout penalties
+  // are one config change away.
   // ----------------------------------------------------------
   salesRamp: {
-    rampStartFraction: 0.1,   // 10% of max demand on first turn
-    rampTurns: {
-      grocery: 6,             // food items ramp in 6 turns
-      electronics: 12,        // electronics ramp in 12 turns
-    },
+    kSteepness: 0.14,      // logistic k; higher = sharper growth transition
+    midpointProgress: 15,  // progress value at 50% demand
   },
 
   // ----------------------------------------------------------

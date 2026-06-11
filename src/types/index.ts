@@ -329,8 +329,12 @@ export interface Firm {
   sellToCompetitors: boolean;
   /** Retail price overrides (player-set). Falls back to config benchmark if absent. */
   retailPrices: Partial<Record<ProductId, number>>;
-  /** Sales ramp progress: turns this product has been actively selling at this firm. */
-  salesRampTurns: Partial<Record<ProductId, number>>;
+  /**
+   * Sales ramp progress per product (continuous float).
+   * Advances by unitsSold/fullRampDemand each turn; resets to 0 on stockout.
+   * Fed into computeRampFraction() to produce the ramp multiplier.
+   */
+  salesRampProgress: Partial<Record<ProductId, number>>;
   /**
    * Harbor auto-source: store buys exactly estimated demand of this product
    * from harbor each turn as a spot purchase. Stores only.
