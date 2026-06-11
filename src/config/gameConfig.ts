@@ -1,4 +1,4 @@
-import type { InvestmentType, ProductId, MacroEventType, RecipeKey } from "../types";
+import type { InvestmentType, ProductId, RecipeKey } from "../types";
 
 // ============================================================
 // All gameplay parameters live here. No numeric constants
@@ -184,23 +184,13 @@ export const GameConfig = {
   firmInvestmentSlotLimit: 8,
 
   // ----------------------------------------------------------
-  // Harbor — sells exactly four products (v1.1)
+  // Harbor price noise
+  // Base prices and the sold-product list live in engine/harbor.ts.
   // ----------------------------------------------------------
   harborPrices: {
-    raw_chicken: 0,           // not sold by harbor
-    chicken: 0,               // not sold by harbor
-    chicken_soup: 0,          // not sold by harbor
-    bauxite: 31,
-    alumina: 0,               // not sold by harbor
-    aluminium: 0,             // not sold by harbor (sold via tender only)
-    laptop_whitelabel: 320,
-    laptop_branded: 0,        // harbor does not sell branded
-    ice_cream_strawberry: 1.4,
-    printer_branded: 95,
-  } satisfies Record<ProductId, number>,
-
-  harborPriceShockMin: 0.85,
-  harborPriceShockMax: 1.20,
+    /** Std dev of per-turn noise as a fraction of base price. */
+    noiseStdDev: 0.01,
+  },
 
   // ----------------------------------------------------------
   // Retail benchmark prices (player can deviate; elasticity applies)
@@ -312,8 +302,6 @@ export const GameConfig = {
     maxLoanMultiple: 3,
     minDurationTurns: 4,
     maxDurationTurns: 40,
-    interestRateShockMin: -0.02,
-    interestRateShockMax: 0.03,
   },
 
   // ----------------------------------------------------------
@@ -346,20 +334,65 @@ export const GameConfig = {
   },
 
   // ----------------------------------------------------------
-  // Macro events
+  // Demand noise
   // ----------------------------------------------------------
-  macroEvents: {
+  demand: {
+    /** Std dev of per-turn noise as a fraction of base demand. */
+    noiseStdDev: 0.02,
+  },
+
+  // ----------------------------------------------------------
+  // Macro events — each category has its own frequency & probability
+  // ----------------------------------------------------------
+
+  recessionEvents: {
+    checkFrequencyTurns: 8,
+    probability: 0.15,
+    /** Turns after a recession ends before another can begin. */
+    cooldownTurns: 12,
+    severityMin: 0.5,   // 1.0 = no effect, 0.0 = zero demand
+    severityMax: 0.95,
+    durationMin: 2,
+    durationMax: 12,
+    /**
+     * Skew for the severity distribution. 0 = uniform between min/max.
+     * Non-zero skew is reserved for post-MVP; currently unused.
+     */
+    skew: 0,
+    /** Std dev of per-turn wobble on the fixed severity multiplier. */
+    severityNoiseStdDev: 0.02,
+  },
+
+  commodityShockEvents: {
     checkFrequencyTurns: 4,
-    baseEventProbability: 0.25,
-    types: [
-      "interest_rate_change",
-      "recession",
-      "commodity_price_shock",
-      "tender_opportunity",
-      "tender_closure",
-    ] as MacroEventType[],
-    recessionDemandMultiplier: 0.75,
-    recessionDurationTurns: 4,
+    probability: 0.25,
+    shockMultiplierMin: 0.85,
+    shockMultiplierMax: 1.20,
+    /** Mean turns for price to normalise back to baseline. */
+    normalizationMeanTurns: 8,
+    /** Std dev of the normalization duration draw. */
+    normalizationStdDev: 3,
+    /** Steepness of the S-curve decay (logistic k). */
+    kSteepness: 0.8,
+  },
+
+  interestRateEvents: {
+    checkFrequencyTurns: 4,
+    probability: 0.15,
+    shockMin: -0.02,
+    shockMax: 0.03,
+  },
+
+  tenderEvents: {
+    checkFrequencyTurns: 4,
+    probability: 0.20,
+  },
+
+  // ----------------------------------------------------------
+  // Economic history rolling window
+  // ----------------------------------------------------------
+  history: {
+    rollingWindowTurns: 40,
   },
 
   // ----------------------------------------------------------

@@ -1,8 +1,13 @@
-import type { GameState, MacroEvent, MacroEventType } from "../types";
+import type { GameState, MacroEvent, MacroEventType, ProductId } from "../types";
 import { GameConfig } from "../config/gameConfig";
-import { generateId, clamp } from "./utils";
+import { generateId } from "./utils";
+import { getHarborSoldProducts, createHarborShock } from "./harbor";
 
-/** Fire all pending macro events and move them to history. Returns event descriptions. */
+// ============================================================
+// Fire pending events
+// ============================================================
+
+/** Apply all pending macro events and move them to history. Returns fired events. */
 export function firePendingEvents(state: GameState): MacroEvent[] {
   const fired: MacroEvent[] = [];
 
@@ -22,26 +27,36 @@ function applyEvent(state: GameState, event: MacroEvent): void {
     case "interest_rate_change": {
       const delta = event.payload.delta as number;
       for (const loan of Object.values(state.loans)) {
-        loan.annualInterestRate = clamp(
-          loan.annualInterestRate + delta,
-          0.01,
-          0.25
+        loan.annualInterestRate = Math.min(
+          0.25,
+          Math.max(0.01, loan.annualInterestRate + delta)
         );
       }
       break;
     }
 
     case "recession": {
-      state.recessionTurnsRemaining = GameConfig.macroEvents.recessionDurationTurns;
+      // No stacking: discard silently if a recession is already active.
+      if (state.recessionTurnsRemaining > 0) break;
+
+      const cfg = GameConfig.recessionEvents;
+      const duration =
+        cfg.durationMin +
+        Math.floor(Math.random() * (cfg.durationMax - cfg.durationMin + 1));
+      state.recessionTurnsRemaining = duration;
+
+      // Draw severity: uniform between min/max (skew=0 for MVP).
+      // Non-zero skew is stored in config for future use but not yet applied.
+      state.recessionSeverity =
+        cfg.severityMin + Math.random() * (cfg.severityMax - cfg.severityMin);
       break;
     }
 
     case "commodity_price_shock": {
-      const productId = event.payload.productId as string;
+      const productId = event.payload.productId as ProductId;
       const multiplier = event.payload.multiplier as number;
-      if (productId in state.harborNode.prices) {
-        (state.harborNode.prices as Record<string, number>)[productId] *= multiplier;
-      }
+      // Delegate to harbor.ts — it owns shock state.
+      createHarborShock(state, productId, multiplier);
       break;
     }
 
@@ -66,107 +81,139 @@ function applyEvent(state: GameState, event: MacroEvent): void {
   }
 }
 
-/** Generate macro events that will fire at the start of the next turn. */
-export function generateUpcomingEvents(state: GameState): void {
-  const cfg = GameConfig.macroEvents;
+// ============================================================
+// Generate upcoming events
+// Each event category has its own independent check frequency
+// and probability — they do not share a pool.
+// ============================================================
 
-  // Barcode event fires exactly once on the configured turn
-  if (state.turn + 1 === GameConfig.game.barcodeAvailableTurn && !state.barcodeAvailable) {
+/** Queue events that will fire at the start of the next turn. */
+export function generateUpcomingEvents(state: GameState): void {
+  const nextTurn = state.turn + 1;
+
+  // ---- Barcode (fires exactly once) ----
+  if (nextTurn === GameConfig.game.barcodeAvailableTurn && !state.barcodeAvailable) {
     state.pendingEvents.push({
       id: generateId(),
       type: "barcode_scanning_available",
-      turn: state.turn + 1,
-      description: "Barcode scanning technology is now available. Invest to unlock inventory and logistics improvements.",
+      turn: nextTurn,
+      description:
+        "Barcode scanning technology is now available. Invest to unlock inventory and logistics improvements.",
       payload: {},
       acknowledged: false,
     });
   }
 
-  // Random macro events on check frequency
-  if ((state.turn + 1) % cfg.checkFrequencyTurns !== 0) return;
-  if (Math.random() > cfg.baseEventProbability) return;
+  // ---- Recession ----
+  const recCfg = GameConfig.recessionEvents;
+  if (
+    nextTurn % recCfg.checkFrequencyTurns === 0 &&
+    Math.random() < recCfg.probability &&
+    state.recessionTurnsRemaining === 0 &&
+    state.recessionCooldownRemaining === 0
+  ) {
+    const durationMin = recCfg.durationMin;
+    const durationMax = recCfg.durationMax;
+    const duration =
+      durationMin + Math.floor(Math.random() * (durationMax - durationMin + 1));
+    state.pendingEvents.push({
+      id: generateId(),
+      type: "recession",
+      turn: nextTurn,
+      description: `A recession is underway. Consumer demand will fall for up to ${duration} turns.`,
+      payload: {},
+      acknowledged: false,
+    });
+  }
 
-  const eligibleTypes: MacroEventType[] = cfg.types.filter(
-    (t) => t !== "barcode_scanning_available"
-  );
-  const type = eligibleTypes[Math.floor(Math.random() * eligibleTypes.length)];
-
-  const event = buildRandomEvent(state, type);
-  if (event) state.pendingEvents.push(event);
-}
-
-function buildRandomEvent(state: GameState, type: MacroEventType): MacroEvent | null {
-  const id = generateId();
-  const turn = state.turn + 1;
-
-  switch (type) {
-    case "interest_rate_change": {
-      const min = GameConfig.loans.interestRateShockMin;
-      const max = GameConfig.loans.interestRateShockMax;
-      const delta = +(min + Math.random() * (max - min)).toFixed(3);
-      const direction = delta >= 0 ? "risen" : "fallen";
-      return {
-        id, type, turn,
-        description: `Interest rates have ${direction} by ${Math.abs(delta * 100).toFixed(1)}%.`,
-        payload: { delta },
-        acknowledged: false,
-      };
-    }
-
-    case "recession": {
-      return {
-        id, type, turn,
-        description: `A recession is underway. Consumer demand will fall for ${GameConfig.macroEvents.recessionDurationTurns} turns.`,
-        payload: {},
-        acknowledged: false,
-      };
-    }
-
-    case "commodity_price_shock": {
-      const products = Object.keys(state.harborNode.prices) as string[];
-      const productId = products[Math.floor(Math.random() * products.length)];
-      const min = GameConfig.harborPriceShockMin;
-      const max = GameConfig.harborPriceShockMax;
-      const multiplier = +(min + Math.random() * (max - min)).toFixed(3);
+  // ---- Commodity price shock ----
+  const shockCfg = GameConfig.commodityShockEvents;
+  if (
+    nextTurn % shockCfg.checkFrequencyTurns === 0 &&
+    Math.random() < shockCfg.probability
+  ) {
+    const eligible = getHarborSoldProducts();
+    if (eligible.length > 0) {
+      const productId = eligible[Math.floor(Math.random() * eligible.length)];
+      const multiplier = +(
+        shockCfg.shockMultiplierMin +
+        Math.random() * (shockCfg.shockMultiplierMax - shockCfg.shockMultiplierMin)
+      ).toFixed(3);
       const direction = multiplier >= 1 ? "risen" : "fallen";
-      return {
-        id, type, turn,
+      state.pendingEvents.push({
+        id: generateId(),
+        type: "commodity_price_shock",
+        turn: nextTurn,
         description: `Harbor price for ${productId.replace(/_/g, " ")} has ${direction} sharply.`,
         payload: { productId, multiplier },
         acknowledged: false,
-      };
+      });
     }
+  }
 
-    case "tender_opportunity": {
-      // Generate a market tender for aluminium (the main industrial output)
-      const tender = buildMarketTender(state);
-      return {
-        id, type, turn,
-        description: `A new market tender has appeared: ${tender.volumeRequired}t of aluminium.`,
-        payload: { tender },
-        acknowledged: false,
-      };
-    }
+  // ---- Interest rate change ----
+  const irCfg = GameConfig.interestRateEvents;
+  if (
+    nextTurn % irCfg.checkFrequencyTurns === 0 &&
+    Math.random() < irCfg.probability
+  ) {
+    const delta = +(
+      irCfg.shockMin + Math.random() * (irCfg.shockMax - irCfg.shockMin)
+    ).toFixed(3);
+    const direction = delta >= 0 ? "risen" : "fallen";
+    state.pendingEvents.push({
+      id: generateId(),
+      type: "interest_rate_change",
+      turn: nextTurn,
+      description: `Interest rates have ${direction} by ${Math.abs(delta * 100).toFixed(1)}%.`,
+      payload: { delta },
+      acknowledged: false,
+    });
+  }
 
-    case "tender_closure": {
-      const openTenders = Object.values(state.tenders).filter((t) => t.status === "open");
-      if (openTenders.length === 0) return null;
+  // ---- Tender opportunity ----
+  const tenderCfg = GameConfig.tenderEvents;
+  if (
+    nextTurn % tenderCfg.checkFrequencyTurns === 0 &&
+    Math.random() < tenderCfg.probability
+  ) {
+    const tender = buildMarketTender(state);
+    state.pendingEvents.push({
+      id: generateId(),
+      type: "tender_opportunity",
+      turn: nextTurn,
+      description: `A new market tender has appeared: ${tender.volumeRequired}t of aluminium.`,
+      payload: { tender },
+      acknowledged: false,
+    });
+  }
+
+  // ---- Tender closure ----
+  if (
+    nextTurn % tenderCfg.checkFrequencyTurns === 0 &&
+    Math.random() < tenderCfg.probability * 0.5  // closure is less common
+  ) {
+    const openTenders = Object.values(state.tenders).filter((t) => t.status === "open");
+    if (openTenders.length > 0) {
       const tender = openTenders[Math.floor(Math.random() * openTenders.length)];
-      return {
-        id, type, turn,
+      state.pendingEvents.push({
+        id: generateId(),
+        type: "tender_closure",
+        turn: nextTurn,
         description: `Market tender for ${tender.product.replace(/_/g, " ")} has closed unexpectedly.`,
         payload: { tenderId: tender.id },
         acknowledged: false,
-      };
+      });
     }
-
-    default:
-      return null;
   }
 }
 
+// ============================================================
+// Helpers
+// ============================================================
+
 function buildMarketTender(state: GameState): import("../types").Tender {
-  const harborPrice = state.harborNode.prices["aluminium"];
+  const harborPrice = state.harborNode.prices["aluminium"] || 195;
   return {
     id: generateId(),
     direction: "market",

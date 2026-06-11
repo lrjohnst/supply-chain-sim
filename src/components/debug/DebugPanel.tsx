@@ -6,6 +6,7 @@ import { tick } from "../../engine/tick";
 import { computeCorporateBooks } from "../../engine/books";
 import { estimateTurnsToBankruptcy } from "../../engine/bankruptcy";
 import { GameConfig } from "../../config/gameConfig";
+import { getHarborSoldProducts, HARBOR_BASE_PRICES } from "../../engine/harbor";
 
 // ================================================================
 // DEBUG PANEL — development only
@@ -89,6 +90,9 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
     { group: "AI", label: "AI cash", value: `€${Math.round(aiCorp?.cash ?? 0).toLocaleString()}` },
     { group: "AI", label: "AI firms", value: aiCorp?.firmIds.length ?? 0 },
     { group: "World", label: "recessionTurnsRemaining", value: gameState.recessionTurnsRemaining, highlight: gameState.recessionTurnsRemaining > 0 ? "warn" : undefined },
+    { group: "World", label: "recessionSeverity", value: gameState.recessionTurnsRemaining > 0 ? gameState.recessionSeverity.toFixed(3) : "—", highlight: gameState.recessionTurnsRemaining > 0 ? "warn" : undefined },
+    { group: "World", label: "recessionCooldown", value: gameState.recessionCooldownRemaining },
+    { group: "World", label: "activeShocks", value: gameState.activeHarborShocks.length, highlight: gameState.activeHarborShocks.length > 0 ? "warn" : undefined },
     { group: "World", label: "barcodeAvailable", value: String(gameState.barcodeAvailable) },
     { group: "World", label: "pendingEvents", value: gameState.pendingEvents.length },
     { group: "World", label: "Active contracts", value: Object.values(gameState.contracts).filter((c) => c.status === "active").length },
@@ -146,6 +150,7 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
       label: "Trigger recession",
       action: () => {
         gameState.recessionTurnsRemaining = 4;
+        gameState.recessionSeverity = 0.75;
         useGameStore.setState({ gameState: { ...gameState } });
       },
     },
@@ -362,6 +367,13 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
             </div>
           </div>
         ))}
+
+        {/* ── Harbor prices ── */}
+        <HarborPricesSection state={gameState} />
+
+        {/* ── Economic history sparklines ── */}
+        <HistorySection state={gameState} />
+
       </div>
 
       {/* Footer */}
@@ -373,6 +385,152 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
         flexShrink: 0,
       }}>
         Shift+D to toggle · not in production
+      </div>
+    </div>
+  );
+}
+
+// ================================================================
+// Harbor prices section
+// ================================================================
+
+function HarborPricesSection({ state }: { state: import("../../types").GameState }) {
+  const products = getHarborSoldProducts();
+  const last = state.economicHistory[state.economicHistory.length - 1];
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ padding: "2px 10px", color: "#ff6666", fontWeight: 700, fontSize: 10, letterSpacing: "0.1em" }}>
+        HARBOR PRICES
+      </div>
+      {products.map((p) => {
+        const base = HARBOR_BASE_PRICES[p];
+        const current = (state.harborNode.prices as Record<string, number>)[p] ?? base;
+        const shock = state.activeHarborShocks.find((s) => s.productId === p);
+        const noise = last?.harborNoiseTerm[p];
+        const disp = last?.harborShockDisplacements[p];
+        return (
+          <div key={p} style={{ padding: "2px 10px", borderBottom: "1px solid #1a1f2e" }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "#8899aa" }}>{p.replace(/_/g, " ")}</span>
+              <span style={{ color: current > base * 1.05 ? "#ffaa00" : current < base * 0.95 ? "#ff8844" : "#ccddee", fontWeight: 600 }}>
+                €{current.toFixed(2)}
+              </span>
+            </div>
+            <div style={{ color: "#445566", fontSize: 10, display: "flex", gap: 8 }}>
+              <span>base €{base.toFixed(2)}</span>
+              {disp !== undefined && disp !== 0 && (
+                <span style={{ color: disp > 0 ? "#ffaa00" : "#ff8844" }}>
+                  shock {disp > 0 ? "+" : ""}{disp.toFixed(2)}
+                </span>
+              )}
+              {noise !== undefined && (
+                <span style={{ color: "#334455" }}>
+                  noise {noise > 0 ? "+" : ""}{noise.toFixed(3)}
+                </span>
+              )}
+              {shock && (
+                <span style={{ color: "#556677" }}>
+                  t{shock.turnsElapsed}/{shock.normalizationDuration}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {/* Active shocks detail */}
+      {state.activeHarborShocks.length > 0 && (
+        <div style={{ padding: "2px 10px", color: "#556677", fontSize: 10 }}>
+          {state.activeHarborShocks.map((s) => {
+            const k = GameConfig.commodityShockEvents.kSteepness;
+            const mid = s.normalizationDuration / 2;
+            const progress = 1 / (1 + Math.exp(-k * (s.turnsElapsed - mid)));
+            return (
+              <div key={s.id}>
+                {s.productId.replace(/_/g, " ")} · shocked €{s.shockedPrice.toFixed(2)} ·{" "}
+                progress {(progress * 100).toFixed(0)}% · {s.turnsElapsed}/{s.normalizationDuration}t
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ================================================================
+// Economic history section (sparklines as text lists)
+// ================================================================
+
+function HistorySection({ state }: { state: import("../../types").GameState }) {
+  const history = state.economicHistory.slice(-20);
+  if (history.length === 0) return null;
+
+  const products = getHarborSoldProducts();
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ padding: "2px 10px", color: "#ff6666", fontWeight: 700, fontSize: 10, letterSpacing: "0.1em" }}>
+        HISTORY (last {history.length} turns)
+      </div>
+
+      {/* Harbor price history per product */}
+      <div style={{ padding: "2px 10px", color: "#556677", fontSize: 9 }}>
+        <div style={{ color: "#667788", marginBottom: 2 }}>Harbor prices:</div>
+        {products.map((p) => {
+          const vals = history.map((h) => h.harborPrices[p] ?? 0);
+          return (
+            <div key={p} style={{ marginBottom: 1 }}>
+              <span style={{ color: "#445566" }}>{p.replace(/_/g, " ").slice(0, 14).padEnd(14)}</span>{" "}
+              <span style={{ color: "#334455", fontFamily: "monospace" }}>
+                {vals.map((v) => v.toFixed(1)).join(" ")}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Demand history per store per product */}
+      {Object.entries(state.firms)
+        .filter(([, f]) => f.type === "store")
+        .map(([firmId, firm]) => {
+          const demandProducts = history
+            .flatMap((h) => Object.keys(h.effectiveDemand[firmId] ?? {}))
+            .filter((v, i, a) => a.indexOf(v) === i) as import("../../types").ProductId[];
+          if (demandProducts.length === 0) return null;
+          return (
+            <div key={firmId} style={{ padding: "2px 10px", color: "#556677", fontSize: 9 }}>
+              <div style={{ color: "#667788", marginBottom: 2 }}>{firm.name} demand:</div>
+              {demandProducts.map((p) => {
+                const vals = history.map((h) => h.effectiveDemand[firmId]?.[p] ?? 0);
+                return (
+                  <div key={p} style={{ marginBottom: 1 }}>
+                    <span style={{ color: "#445566" }}>{String(p).replace(/_/g, " ").slice(0, 14).padEnd(14)}</span>{" "}
+                    <span style={{ color: "#334455", fontFamily: "monospace" }}>
+                      {vals.map((v) => String(v).padStart(4)).join(" ")}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+
+      {/* Net worth history */}
+      <div style={{ padding: "2px 10px", color: "#556677", fontSize: 9 }}>
+        <div style={{ color: "#667788", marginBottom: 2 }}>Net worth (k€):</div>
+        <div>
+          <span style={{ color: "#445566" }}>{"Player        "}</span>{" "}
+          <span style={{ color: "#334455", fontFamily: "monospace" }}>
+            {history.map((h) => Math.round(h.playerNetWorth / 1000).toString().padStart(5)).join(" ")}
+          </span>
+        </div>
+        <div>
+          <span style={{ color: "#445566" }}>{"AI            "}</span>{" "}
+          <span style={{ color: "#334455", fontFamily: "monospace" }}>
+            {history.map((h) => Math.round(h.aiNetWorth / 1000).toString().padStart(5)).join(" ")}
+          </span>
+        </div>
       </div>
     </div>
   );

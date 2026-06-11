@@ -16,13 +16,53 @@ export type ProductId =
   | "ice_cream_strawberry"
   | "printer_branded";
 
-// Products the harbor sells (v1.1: exactly four)
-export const HARBOR_SELL_PRODUCTS: ProductId[] = [
-  "ice_cream_strawberry",
-  "laptop_whitelabel",
-  "printer_branded",
-  "bauxite",
-];
+// ============================================================
+// Harbor shocks & economic history
+// ============================================================
+
+/** A commodity price shock that is actively decaying back to baseline. */
+export interface ActiveHarborShock {
+  id: string;
+  productId: ProductId;
+  basePrice: number;
+  shockedPrice: number;
+  /** Duration drawn from normal distribution at shock creation. */
+  normalizationDuration: number;
+  /** Turns elapsed since the shock fired (0 on the turn it fires). */
+  turnsElapsed: number;
+}
+
+/** Per-turn economic snapshot for the rolling history window. */
+export interface EconomicSnapshot {
+  turn: number;
+  // Harbor prices
+  harborPrices: Partial<Record<ProductId, number>>;
+  harborBasePrices: Partial<Record<ProductId, number>>;
+  harborShockDisplacements: Partial<Record<ProductId, number>>;
+  harborNoiseTerm: Partial<Record<ProductId, number>>;
+  // Demand — firmId → productId → value
+  effectiveDemand: Record<string, Partial<Record<ProductId, number>>>;
+  demandNoiseTerm: Record<string, Partial<Record<ProductId, number>>>;
+  // Recession
+  recessionSeverity: number;         // 0 when no recession
+  recessionNoiseTerm: number;        // severity noise term this turn
+  recessionEffectiveSeverity: number;// clamped severity actually used
+  // Active shock summaries
+  activeShocks: Array<{
+    productId: ProductId;
+    turnsElapsed: number;
+    normalizationDuration: number;
+    sCurveProgress: number;
+    displacement: number;
+  }>;
+  // Interest rate (average across active loans; config base if no loans)
+  currentInterestRate: number;
+  // Net worth & cash
+  playerNetWorth: number;
+  aiNetWorth: number;
+  playerCash: number;
+  aiCash: number;
+}
 
 export type FirmType = "farm" | "factory" | "store";
 
@@ -325,6 +365,14 @@ export interface GameState {
   eventHistory: MacroEvent[];
   barcodeAvailable: boolean;
   recessionTurnsRemaining: number;
+  /** Severity multiplier drawn when a recession fires (0 = no recession active). */
+  recessionSeverity: number;
+  /** Turns remaining before another recession can be generated. */
+  recessionCooldownRemaining: number;
+  /** Currently decaying commodity price shocks. */
+  activeHarborShocks: ActiveHarborShock[];
+  /** Rolling economic history (capped at config window). */
+  economicHistory: EconomicSnapshot[];
 }
 
 // ============================================================

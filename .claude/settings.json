@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(cd \"B:\\Repositories\\supply-chain-sim\"; npx tsc --noEmit *)",
+      "PowerShell(cd \"B:\\Repositories\\supply-chain-sim\"; npx tsx src/simulation/headless.ts *)"
+    ]
+  }
+}

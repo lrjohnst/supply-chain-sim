@@ -1,6 +1,7 @@
 import { useGameStore } from "../../store/gameStore";
 import { euros, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
+import { getBasePrice } from "../../engine/harbor";
 import type { ProductId } from "../../types";
 
 const RETAIL_PRODUCTS: ProductId[] = [
@@ -43,7 +44,7 @@ export default function ProductsScreen() {
       const price = sellingFirms[0]?.retailPrices[product]
         ?? GameConfig.retailBenchmarkPrices[product] ?? 0;
       const benchmark = GameConfig.retailBenchmarkPrices[product] ?? 0;
-      const harborCost = GameConfig.harborPrices[product] ?? 0;
+      const harborCost = getBasePrice(product);
       const margin = price > 0 ? (price - harborCost) / price : 0;
 
       // Revenue from ledger last turn

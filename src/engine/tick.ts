@@ -1,6 +1,7 @@
 import type { GameState, MacroEvent } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { firePendingEvents, generateUpcomingEvents } from "./macroEvents";
+import { tickHarborPrices } from "./harbor";
 import { advanceInvestments } from "./investments";
 import { runProduction } from "./production";
 import { executeContracts } from "./contracts";
@@ -11,6 +12,7 @@ import { deductOperatingCosts, updateQuality } from "./operatingCosts";
 import { runAI } from "./ai";
 import { checkWinCondition } from "./winCondition";
 import { BankruptcyError, estimateTurnsToBankruptcy, type BankruptcyReason } from "./bankruptcy";
+import { appendSnapshot } from "./history";
 import type { LossReason } from "./winCondition";
 
 export interface TickResult {
@@ -32,42 +34,54 @@ export interface TickResult {
  *
  * Turn sequence:
  *  1.  Fire pending macro events
- *  2.  Advance investments
- *  3.  Run farm/factory production
- *  4.  Execute active contracts          ← bankruptcy check
- *  5.  Evaluate closing tenders
- *  6.  Run retail (B2C) sales
- *  7.  Process loans                     ← bankruptcy check
- *  8.  Deduct operating costs            ← bankruptcy check
- *  9.  Update firm quality
- *  10. Estimate turns-to-bankruptcy (early warning data, no side effects)
- *  11. Run AI decisions
- *  12. Check win/loss conditions
- *  13. Generate upcoming macro events
- *  14. Advance turn counter
+ *  2.  Tick harbor prices (base + shock displacement + noise)
+ *  3.  Advance investments
+ *  4.  Run farm/factory production
+ *  5.  Execute active contracts          ← bankruptcy check
+ *  6.  Evaluate closing tenders
+ *  7.  Run retail (B2C) sales
+ *  8.  Process loans                     ← bankruptcy check
+ *  9.  Deduct operating costs            ← bankruptcy check
+ *  10. Update firm quality
+ *  11. Estimate turns-to-bankruptcy (early warning, no side effects)
+ *  12. Run AI decisions
+ *  13. Check win/loss conditions
+ *  14. Generate upcoming macro events
+ *  15. Append economic snapshot
+ *  16. Advance turn counter
  *
- * Any BankruptcyError thrown by steps 4, 7, or 8 is caught here.
+ * Any BankruptcyError thrown by steps 5, 8, or 9 is caught here.
  * On bankruptcy: state.phase = "lost", tick returns immediately.
  */
 export function tick(state: GameState): TickResult {
   const firedEvents = firePendingEvents(state);
+
+  // Step 2: recalculate harbor prices with noise + shock decay
+  const harborData = tickHarborPrices(state);
+
   advanceInvestments(state);
   runProduction(state);
 
   // Steps that may throw BankruptcyError
+  let retailData;
   try {
     executeContracts(state);
     evaluateTenders(state);
-    runRetailSales(state);
+    retailData = runRetailSales(state);
     processLoans(state);
     deductOperatingCosts(state);
   } catch (e) {
     if (e instanceof BankruptcyError) {
       state.phase = "lost";
       return {
-        firedEvents, newTurn: state.turn,
-        isLoss: true, justWon: false, winner: null,
-        bankruptcyReason: e.reason, lossReason: "lost_bankruptcy", turnsToBankruptcy: null,
+        firedEvents,
+        newTurn: state.turn,
+        isLoss: true,
+        justWon: false,
+        winner: null,
+        bankruptcyReason: e.reason,
+        lossReason: "lost_bankruptcy",
+        turnsToBankruptcy: null,
       };
     }
     throw e;
@@ -88,9 +102,14 @@ export function tick(state: GameState): TickResult {
   if (result.isLoss) {
     state.phase = "lost";
     return {
-      firedEvents, newTurn: state.turn,
-      isLoss: true, justWon: false, winner: null,
-      bankruptcyReason: null, lossReason: result.reason, turnsToBankruptcy,
+      firedEvents,
+      newTurn: state.turn,
+      isLoss: true,
+      justWon: false,
+      winner: null,
+      bankruptcyReason: null,
+      lossReason: result.reason,
+      turnsToBankruptcy,
     };
   }
 
@@ -98,11 +117,20 @@ export function tick(state: GameState): TickResult {
   if (justWon) state.phase = "won";
 
   generateUpcomingEvents(state);
+
+  // Step 15: record economic snapshot before incrementing turn
+  appendSnapshot(state, harborData, retailData);
+
   state.turn += 1;
 
   return {
-    firedEvents, newTurn: state.turn,
-    isLoss: false, justWon, winner: result.winner,
-    bankruptcyReason: null, lossReason: null, turnsToBankruptcy,
+    firedEvents,
+    newTurn: state.turn,
+    isLoss: false,
+    justWon,
+    winner: result.winner,
+    bankruptcyReason: null,
+    lossReason: null,
+    turnsToBankruptcy,
   };
 }

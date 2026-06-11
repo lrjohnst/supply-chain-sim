@@ -21,6 +21,15 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+/** Box-Muller transform: sample one value from N(mean, stdDev). */
+export function sampleNormal(mean: number, stdDev: number): number {
+  if (stdDev === 0) return mean;
+  const u1 = Math.random() || 1e-10; // guard against log(0)
+  const u2 = Math.random();
+  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  return mean + stdDev * z;
+}
+
 /** Returns the total asset book value for a corporation (investments at cost + inventory at cost). */
 export function corporationAssetValue(state: GameState, corporationId: string): number {
   const corp = state.corporations[corporationId];
