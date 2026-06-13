@@ -33,6 +33,10 @@ function applyEvent(state: GameState, event: MacroEvent): void {
           Math.max(0.01, loan.annualInterestRate + delta)
         );
       }
+      state.currentBaseInterestRate = Math.min(
+        0.25,
+        Math.max(0.01, state.currentBaseInterestRate + delta)
+      );
       break;
     }
 
@@ -215,19 +219,29 @@ export function generateUpcomingEvents(state: GameState): void {
 
 function buildMarketTender(state: GameState): import("../types").Tender {
   const harborPrice = state.harborNode.prices["aluminium"] || 195;
+  const cfg = GameConfig.tenders;
   return {
     id: generateId(),
     direction: "market",
     publishedByCorporationId: null,
+    publishedByFirmId: null,
     product: "aluminium",
     volumeRequired: 100 + Math.floor(Math.random() * 400),
     targetUnitPrice: +(harborPrice * (1.05 + Math.random() * 0.15)).toFixed(2),
-    minQuality: 0.5,
+    minQuality: GameConfig.tenderEvents.minQuality,
     durationTurns: 4,
     openTurn: state.turn + 1,
     closeTurn: state.turn + 5,
     status: "open",
     bids: [],
     awardedBids: [],
+    contractDurationTurns: cfg.contractDurationTurns,
+    renewalGapTurns: cfg.renewalGapTurns,
+    cycleNumber: 1,
+    previousTenderId: null,
+    qualityDriftPerCycle: cfg.qualityDriftPerCycle,
+    volumeGrowthFactor: 1.0,
+    incumbentCorporationId: null,
+    incumbentNoticeGiven: false,
   };
 }

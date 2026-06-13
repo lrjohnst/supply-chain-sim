@@ -4,13 +4,14 @@ import { firePendingEvents, generateUpcomingEvents } from "./macroEvents";
 import { tickHarborPrices } from "./harbor";
 import { advanceInvestments, type PausedInvestmentInfo } from "./investments";
 import { runProduction } from "./production";
-import { executeContracts } from "./contracts";
-import { evaluateTenders } from "./tenders";
+import { executeContracts, checkContractRisks, type ContractWarning, type BreachGateProposal } from "./contracts";
+import { evaluateTenders, processRenewals } from "./tenders";
 import { runHarborSpotPurchases } from "./harborSpotPurchase";
 import { runRetailSales } from "./retail";
 import { processLoans } from "./loans";
 import { deductOperatingCosts, updateQuality } from "./operatingCosts";
 import { runAI } from "./ai";
+import { tickCities } from "./city";
 import { checkWinCondition } from "./winCondition";
 import { BankruptcyError, estimateTurnsToBankruptcy, type BankruptcyReason } from "./bankruptcy";
 import { appendSnapshot } from "./history";
@@ -30,6 +31,10 @@ export interface TickResult {
   turnsToBankruptcy: number | null;
   /** Player investments that paused this turn due to insufficient funds. */
   pausedInvestments: PausedInvestmentInfo[];
+  /** Active contract breach risk warnings with stable IDs. */
+  contractWarnings: ContractWarning[];
+  /** Breach conditions met this tick that require player action (gate) or AI auto-handling. */
+  breachGateProposals: BreachGateProposal[];
 }
 
 /**
@@ -68,10 +73,14 @@ export function tick(state: GameState): TickResult {
 
   // Steps that may throw BankruptcyError
   let retailData;
+  let contractWarnings: ContractWarning[] = [];
+  let breachGateProposals: BreachGateProposal[] = [];
   try {
-    executeContracts(state);
+    breachGateProposals = executeContracts(state);
+    processRenewals(state);
     evaluateTenders(state);
     runHarborSpotPurchases(state);
+    tickCities(state);
     retailData = runRetailSales(state);
     processLoans(state);
     deductOperatingCosts(state);
@@ -88,10 +97,14 @@ export function tick(state: GameState): TickResult {
         lossReason: "lost_bankruptcy",
         turnsToBankruptcy: null,
         pausedInvestments,
+        contractWarnings: [],
+        breachGateProposals: [],
       };
     }
     throw e;
   }
+
+  contractWarnings = checkContractRisks(state);
 
   updateQuality(state);
 
@@ -117,6 +130,8 @@ export function tick(state: GameState): TickResult {
       lossReason: result.reason,
       turnsToBankruptcy,
       pausedInvestments,
+      contractWarnings,
+      breachGateProposals,
     };
   }
 
@@ -130,6 +145,12 @@ export function tick(state: GameState): TickResult {
 
   state.turn += 1;
 
+  // Trim transaction ledger to rolling window to prevent unbounded growth
+  const txCutoff = state.turn - GameConfig.transactions.rollingWindowTurns;
+  if (txCutoff > 0) {
+    state.transactions = state.transactions.filter((tx) => tx.turn >= txCutoff);
+  }
+
   return {
     firedEvents,
     newTurn: state.turn,
@@ -140,5 +161,7 @@ export function tick(state: GameState): TickResult {
     lossReason: null,
     turnsToBankruptcy,
     pausedInvestments,
+    contractWarnings,
+    breachGateProposals,
   };
 }

@@ -11,14 +11,15 @@ import {
   cancelPendingRecipeChange as engineCancelPending,
   markSectionIntentionallyIdle as engineMarkSectionIdle,
 } from "../engine/investments";
-import { takeLoan } from "../engine/loans";
-import { createContract } from "../engine/contracts";
-import { submitTenderBid } from "../engine/tenders";
+import { takeLoan, computeTotalAssets } from "../engine/loans";
+import { createContract, executeBreachDeclaration, resetBreachCounters } from "../engine/contracts";
+import { generateId } from "../engine/utils";
+import { submitTenderBid, withdrawTenderBid as engineWithdrawTenderBid } from "../engine/tenders";
 import type { InvestmentType, Contract, RecipeKey, ProductId } from "../types";
 import type { AppNotification, GateAction } from "./notificationTypes";
 import { GameConfig } from "../config/gameConfig";
 
-export type Screen = "map" | "tenders" | "books" | "finance" | "products";
+export type Screen = "map" | "tenders" | "contracts" | "books" | "finance" | "products" | "settings";
 
 let _notifCounter = 0;
 function notifId() { return `notif-${++_notifCounter}-${Date.now()}`; }
@@ -62,9 +63,12 @@ interface GameStore {
 
   // Actions — finance
   requestLoan: (principal: number, durationTurns: number) => string | null;
-  addContract: (contract: Omit<Contract, "id" | "turnsExecuted">) => string | null;
+  addContract: (contract: Omit<Contract, "id" | "turnsExecuted" | "cumulativeVolumeShortfall" | "consecutiveQualityFailureTurns">) => string | null;
   bidOnTender: (tenderId: string, firmId: string, volume: number, price: number) => string | null;
-  setTrainingBudget: (amount: number) => void;
+  withdrawTenderBid: (tenderId: string, corporationId: string) => string | null;
+  setCorporateTrainingIntensity: (intensity: number) => void;
+  setFirmTrainingIntensity: (firmId: string, intensity: number) => void;
+  resetFirmTrainingIntensity: (firmId: string) => void;
   setMarketingBudget: (amount: number) => void;
 
   // Actions — notifications
@@ -76,6 +80,10 @@ interface GameStore {
 
   // Actions — win
   endGame: () => void;
+  dismissWinScreen: () => void;
+
+  // Win screen visibility
+  showWinScreen: boolean;
 }
 
 const FIRM_BUILD_COST: Record<"farm" | "factory" | "store", number> = {
@@ -94,6 +102,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   notifications: [],
   notificationPanelOpen: false,
   gateQueue: [],
+  showWinScreen: false,
 
   // ------------------------------------------------------------------
   // Game lifecycle
@@ -110,6 +119,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       lastBooks: computeCorporateBooks(state, playerCorpId, 0),
       notifications: [],
       gateQueue: [],
+      showWinScreen: false,
       notificationPanelOpen: false,
     });
   },
@@ -152,43 +162,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     // Win transition: phase just became "won"
-    let newGateActions: GateAction[] = [...get().gateQueue];
+    const newGateActions: GateAction[] = [...get().gateQueue];
     if (result.justWon) {
-      // Persistent win notification in the list
-      const winNotifId = "win-notification"; // stable ID so it's not duplicated
-      const winNotif: AppNotification = {
-        id: winNotifId,
-        turn: gameState.turn,
-        message: "🏆 You have won the game.",
-        actions: [{ label: "End Game", handler: () => get().endGame(), style: "primary" }],
-        dismissed: false,
-        persistent: true,
-      };
-      // Only add if not already present
-      const existing = get().notifications.find((n) => n.id === winNotifId);
-      if (!existing) newNotifs.push(winNotif);
-
-      // One-time gate action for the win
-      const winGateId = gateId();
-      newGateActions = [
-        ...newGateActions,
-        {
-          id: winGateId,
-          message: "You have won the game. Would you like to keep playing or end the game?",
-          options: [
-            {
-              label: "Keep Playing",
-              handler: () => get().resolveGateAction(winGateId, "Keep Playing"),
-              style: "default" as const,
-            },
-            {
-              label: "End Game",
-              handler: () => { get().resolveGateAction(winGateId, "End Game"); get().endGame(); },
-              style: "primary" as const,
-            },
-          ],
-        },
-      ];
+      set({ showWinScreen: true });
     }
 
     // ----------------------------------------------------------------
@@ -310,14 +286,94 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
+    // ----------------------------------------------------------------
+    // Breach gate proposals — convert engine proposals to gate actions
+    // ----------------------------------------------------------------
+    for (const proposal of result.breachGateProposals) {
+      const stableGateId = `gate-breach-${proposal.contractId}`;
+      if (newGateActions.some((g) => g.id === stableGateId)) continue;
+
+      const { contractId, reason, counterpartyName, sellerCorpId } = proposal;
+      const reasonLabel = reason === "volume_shortfall"
+        ? `cumulative delivery shortfall exceeded ${GameConfig.contracts.volumeShortfallBreachThreshold} units`
+        : `quality fell below threshold for ${GameConfig.contracts.qualityBreachConsecutiveTurns} consecutive turns`;
+
+      newGateActions.push({
+        id: stableGateId,
+        message: `Contract breach conditions met: ${reasonLabel}. ${counterpartyName} has failed to meet ${reason === "volume_shortfall" ? "volume" : "quality"} requirements. Declare breach and terminate contract?`,
+        options: [
+          {
+            label: "Declare Breach",
+            handler: () => {
+              const { gameState: gs } = get();
+              if (!gs) return;
+              const msgs = executeBreachDeclaration(gs, contractId);
+              set((s) => ({
+                gameState: { ...gs },
+                notifications: [
+                  ...s.notifications,
+                  ...msgs.map((m) => ({
+                    id: notifId(), turn: gs.turn, message: m,
+                    dismissed: false, persistent: false,
+                  })),
+                ],
+              }));
+              get().resolveGateAction(stableGateId, "Declare Breach");
+            },
+            style: "primary" as const,
+          },
+          {
+            label: "Continue Contract",
+            handler: () => {
+              const { gameState: gs } = get();
+              if (gs) {
+                resetBreachCounters(gs, contractId);
+                set({ gameState: { ...gs } });
+              }
+              get().resolveGateAction(stableGateId, "Continue Contract");
+            },
+            style: "default" as const,
+          },
+        ],
+      });
+
+      // Suppress unused-variable warning — sellerCorpId captured for future use (e.g. fine notifications)
+      void sellerCorpId;
+    }
+
+    // Breach risk warnings — replace old set with fresh one each tick.
+    // Stable IDs mean auto-dismiss when risk resolves, no duplicates while it persists.
+    const warningIds = new Set(result.contractWarnings.map((w) => w.id));
+    const breachNotifs: AppNotification[] = result.contractWarnings.map((w) => ({
+      id: w.id,
+      turn: gameState.turn - 1,
+      message: w.message,
+      dismissed: false,
+      persistent: false,
+    }));
+
     set((s) => ({
       gameState: { ...gameState },
       lastTickResult: result,
       lastBooks: books,
-      // Purge any legacy bankruptcy warning notifications — the bottom bar
-      // now owns this indicator as a live reading. Identified by message prefix.
       notifications: [
-        ...s.notifications.filter((n) => !n.message.startsWith("⚠ At your current burn rate")),
+        // Keep non-breach, non-bankruptcy-warning notifications
+        ...s.notifications.filter(
+          (n) =>
+            !n.id.startsWith("breach-") &&
+            !n.message.startsWith("⚠ At your current burn rate")
+        ),
+        // Re-add breach warnings that are still active (preserves dismissed state)
+        ...s.notifications
+          .filter((n) => n.id.startsWith("breach-") && warningIds.has(n.id))
+          .map((n) => {
+            const fresh = result.contractWarnings.find((w) => w.id === n.id);
+            return fresh ? { ...n, message: fresh.message, dismissed: false } : n;
+          }),
+        // Add new breach warnings not previously seen
+        ...breachNotifs.filter(
+          (w) => !s.notifications.some((n) => n.id === w.id)
+        ),
         ...newNotifs,
       ],
       gateQueue: newGateActions,
@@ -407,7 +463,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (firmsInCity >= city.firmSlots) return "No firm slots remaining in this city.";
     const cost = FIRM_BUILD_COST[type];
     if (playerCorp.cash < cost) return `Insufficient funds. Required: €${cost.toLocaleString()}.`;
-    const id = Math.random().toString(36).slice(2, 10);
+    const id = generateId();
     gameState.firms[id] = makeFirm(id, playerCorp.id, cityNodeId, type, name);
     playerCorp.firmIds.push(id);
     playerCorp.cash -= cost;
@@ -445,25 +501,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   addContract: (contract) => {
     const { gameState } = get();
     if (!gameState) return "No active game.";
-    const countBefore = Object.keys(gameState.contracts).length;
-    const err = createContract(gameState, contract);
-    if (!err) {
-      const newId = Object.keys(gameState.contracts)[countBefore];
-      if (newId) {
-        const buyerFirmId = contract.buyerParty.firmId;
-        const sellerFirmId = contract.sellerParty.firmId;
-        if (buyerFirmId && gameState.firms[buyerFirmId]) {
-          const f = gameState.firms[buyerFirmId];
-          if (!f.activeContractIds.includes(newId)) f.activeContractIds.push(newId);
-        }
-        if (sellerFirmId && gameState.firms[sellerFirmId]) {
-          const f = gameState.firms[sellerFirmId];
-          if (!f.activeContractIds.includes(newId)) f.activeContractIds.push(newId);
-        }
-      }
-      set({ gameState: { ...gameState } });
-    }
-    return err;
+    const { error } = createContract(gameState, {
+      ...contract,
+      originId: null,
+      originType: null,
+      incumbentNoticeGiven: false,
+      lastBreachWarnTurn: 0,
+    });
+    if (!error) set({ gameState: { ...gameState } });
+    return error;
   },
 
   bidOnTender: (tenderId, firmId, volume, price) => {
@@ -474,11 +520,50 @@ export const useGameStore = create<GameStore>((set, get) => ({
     return err;
   },
 
-  setTrainingBudget: (amount) => {
+  withdrawTenderBid: (tenderId, corporationId) => {
+    const { gameState } = get();
+    if (!gameState) return "No active game.";
+    const err = engineWithdrawTenderBid(gameState, tenderId, corporationId);
+    if (!err) set({ gameState: { ...gameState } });
+    return err;
+  },
+
+  setCorporateTrainingIntensity: (intensity) => {
     const { gameState } = get();
     if (!gameState) return;
     const corp = Object.values(gameState.corporations).find((c) => c.isPlayer);
-    if (corp) { corp.trainingBudgetPerTurn = amount; set({ gameState: { ...gameState } }); }
+    if (!corp) return;
+    corp.corporateTrainingIntensity = intensity;
+    // Update all non-overridden firms to match the new corporate default.
+    for (const firmId of corp.firmIds) {
+      const firm = gameState.firms[firmId];
+      if (firm && !firm.trainingIntensityOverridden) {
+        firm.trainingIntensity = intensity;
+      }
+    }
+    set({ gameState: { ...gameState } });
+  },
+
+  setFirmTrainingIntensity: (firmId, intensity) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const firm = gameState.firms[firmId];
+    if (!firm) return;
+    firm.trainingIntensity = intensity;
+    firm.trainingIntensityOverridden = true;
+    set({ gameState: { ...gameState } });
+  },
+
+  resetFirmTrainingIntensity: (firmId) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const firm = gameState.firms[firmId];
+    if (!firm) return;
+    const corp = gameState.corporations[firm.corporationId];
+    if (!corp) return;
+    firm.trainingIntensity = corp.corporateTrainingIntensity;
+    firm.trainingIntensityOverridden = false;
+    set({ gameState: { ...gameState } });
   },
 
   setMarketingBudget: (amount) => {
@@ -517,8 +602,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   // ------------------------------------------------------------------
 
   endGame: () => {
-    // Navigate to start screen by resetting game state
-    set({ gameState: null, notifications: [], gateQueue: [] });
+    set({ gameState: null, notifications: [], gateQueue: [], showWinScreen: false });
+  },
+
+  dismissWinScreen: () => {
+    set({ showWinScreen: false });
   },
 }));
 

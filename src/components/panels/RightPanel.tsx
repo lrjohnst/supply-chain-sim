@@ -4,7 +4,7 @@ import { euros, pct, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
 import { estimatedDemand, computeRampFraction } from "../../engine/retail";
 import { getBasePrice } from "../../engine/harbor";
-import { getStoreSellableProducts } from "../../engine/harborSpotPurchase";
+import { getStoreSellableProducts } from "../../engine/products";
 import { transportCostToNode, linksToHarbor } from "../../engine/utils";
 import { getHarborSoldProducts } from "../../engine/harbor";
 import { displayName, getProductsHandledBy, isSoldByHarbor } from "../../engine/products";
@@ -34,7 +34,7 @@ export default function RightPanel() {
     return (
       <div style={panelStyle}>
         <div style={{ color: "var(--text-dim)", fontSize: 12, padding: 16 }}>
-          Click a node or firm to inspect it.
+          Select a city to view and manage firms.
         </div>
       </div>
     );
@@ -151,6 +151,7 @@ function FirmPanel({ firm }: { firm: Firm }) {
     configureProductionLine, cancelPendingRecipeChange, markLineIntentionallyIdle,
     markSectionIntentionallyIdle, toggleHarborAutoSource,
     addContract, setRetailPrice, setSellToCompetitors,
+    setFirmTrainingIntensity, resetFirmTrainingIntensity,
   } = useGameStore();
   const [invError, setInvError] = useState<string | null>(null);
   const [contractError, setContractError] = useState<string | null>(null);
@@ -181,13 +182,12 @@ function FirmPanel({ firm }: { firm: Firm }) {
           <span style={{ fontSize: 18 }}>
             {firm.type === "farm" ? "🌾" : firm.type === "factory" ? "🏭" : "🏪"}
           </span>
-          <h2>{firm.name}</h2>
+          <h2 style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{firm.name}</h2>
         </div>
         <span className="tag tag-gold">Yours</span>
       </div>
       <hr />
       <div style={sectionStyle}>
-        <Row label="Quality" value={pct(firm.quality)} />
         <Row label="Investment slots" value={`${firm.investments.length} / ${GameConfig.firmInvestmentSlotLimit} used`} />
       </div>
 
@@ -225,6 +225,12 @@ function FirmPanel({ firm }: { firm: Firm }) {
                       >✕</button>
                     )}
                   </div>
+                  {/* Per-line quality */}
+                  {lineSetup && lineSetup.lineStatus !== "unconfigured" && (
+                    <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2, paddingLeft: 2 }}>
+                      Quality: {pct(lineSetup.quality)}
+                    </div>
+                  )}
                   {/* Production line recipe configuration */}
                   {lineSetup && inv.status === "complete" && (
                     <ProductionLineConfig
@@ -259,6 +265,62 @@ function FirmPanel({ firm }: { firm: Firm }) {
           </div>
         </>
       )}
+
+      {/* Training intensity */}
+      {(() => {
+        const playerCorp = Object.values(gameState!.corporations).find((c) => c.isPlayer);
+        if (!playerCorp) return null;
+        const corp = gameState!.corporations[firm.corporationId];
+        if (!corp) return null;
+        const threshold = GameConfig.training.qualityThreshold;
+        const improving = firm.trainingIntensity >= threshold;
+        const baseCost = GameConfig.training.baseTrainingCostPerTurn[firm.type] ?? 0;
+        const costPerTurn = baseCost * (firm.trainingIntensity / 100);
+        return (
+          <>
+            <hr />
+            <div style={sectionStyle}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <h3>Training</h3>
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  color: improving ? "var(--green)" : "var(--danger)",
+                }}>
+                  {improving ? "▲ Quality improving" : "▼ Quality decaying"}
+                </span>
+              </div>
+              {firm.trainingIntensityOverridden && (
+                <div style={{ fontSize: 10, color: "var(--gold)", marginBottom: 4 }}>
+                  Override active — corporate default: {corp.corporateTrainingIntensity}%
+                </div>
+              )}
+              <input
+                type="range" min={0} max={100} step={1}
+                value={firm.trainingIntensity}
+                onChange={(e) => setFirmTrainingIntensity(firm.id, parseInt(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--gold)" }}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
+                <span>0%</span>
+                <span style={{ color: "var(--text)", fontWeight: 600 }}>{firm.trainingIntensity}%</span>
+                <span>100%</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>
+                Cost: {euros(costPerTurn)}/turn
+                {" · "}Threshold: {threshold}%
+              </div>
+              {firm.trainingIntensityOverridden && (
+                <button
+                  style={{ marginTop: 6, fontSize: 10, padding: "2px 8px" }}
+                  onClick={() => resetFirmTrainingIntensity(firm.id)}
+                >
+                  Reset to corporate default ({corp.corporateTrainingIntensity}%)
+                </button>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* Sell to competitors toggle (farms + factories) */}
       {(firm.type === "farm" || firm.type === "factory") && (
@@ -435,9 +497,8 @@ function HarborSourcingSection({
   const transportCostPerUnit = transportCostToNode(gameState, firm.cityNodeId);
 
   // Show existing active harbor contracts for this firm
-  const activeHarborContracts = firm.activeContractIds
-    .map((id) => gameState.contracts[id])
-    .filter((c) => c && c.status === "active" && c.sellerParty.type === "harbor");
+  const activeHarborContracts = Object.values(gameState.contracts)
+    .filter((c) => c.status === "active" && c.sellerParty.type === "harbor" && c.buyerParty.firmId === firm.id);
 
   const harborPrice = selectedProduct
     ? (gameState.harborNode.prices[selectedProduct as ProductId] ?? 0)

@@ -4,6 +4,7 @@ import { inventoryQuantity, removeFromInventory, clamp, sampleNormal } from "./u
 import { postTransaction } from "./ledger";
 import { hasInvestment } from "./investments";
 import { checkMilestones } from "./milestones";
+import { getCityDemandMultiplier } from "./city";
 
 // ============================================================
 // Return type for snapshot recording
@@ -107,9 +108,12 @@ export function runRetailSales(state: GameState): RetailTickData {
     for (const product of getSellableProducts(firm)) {
       const available = inventoryQuantity(firm.inventory, product);
 
-      // Stockout: full ramp reset
       if (available <= 0) {
-        if (firm.salesRampProgress[product] !== undefined) {
+        // If harbor auto-source is enabled, zero inventory means harbor purchased
+        // 0 units because deterministic demand was 0 (e.g. deep recession) — pause
+        // the ramp rather than resetting it. The store is not at fault.
+        // Without auto-source, zero inventory is a genuine stockout → full ramp reset.
+        if (!firm.harborAutoSource[product as ProductId]) {
           firm.salesRampProgress[product] = 0;
         }
         continue;
@@ -119,8 +123,10 @@ export function runRetailSales(state: GameState): RetailTickData {
       if (!benchmarkPrice || benchmarkPrice <= 0) continue;
       const retailPrice = firm.retailPrices[product] ?? benchmarkPrice;
 
-      // Step 1: Base demand
-      const baseDemand = computeBaseDemand(cityNode.population, product);
+      // Step 1: Base demand (population × perCapita × city wealth multiplier)
+      const baseDemand = Math.floor(
+        computeBaseDemand(cityNode.population, product) * getCityDemandMultiplier(state, firm.cityNodeId)
+      );
       if (baseDemand <= 0) continue;
 
       // Step 2: Ramp fraction

@@ -100,9 +100,7 @@ function createHarborContract(
     durationTurns,
     isInternal: false,
   });
-  const newId = Object.keys(state.contracts).at(-1)!;
-  const firm = state.firms[firmId];
-  if (!firm.activeContractIds.includes(newId)) firm.activeContractIds.push(newId);
+  // Contract is now tracked via state.contracts — no separate firm-level list needed.
 }
 
 // ------------------------------------------------------------------

@@ -1,21 +1,33 @@
 import { useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { computeCorporateBooks, computeFirmBooks } from "../../engine/books";
-import { euros } from "../shared/fmt";
+import { euros, turnLabel } from "../shared/fmt";
 import type { Transaction } from "../../types";
 
 export default function BooksScreen() {
   const { gameState } = useGameStore();
   const [selectedFirmId, setSelectedFirmId] = useState<string | null>(null);
-  const [historyTurns, setHistoryTurns] = useState(4);
+  // selectedTurn: the turn currently displayed. Always a completed turn (never current in-progress turn).
+  // null means "most recent completed turn" — resolved below.
+  const [selectedTurn, setSelectedTurn] = useState<number | null>(null);
 
   if (!gameState) return null;
 
   const playerCorp = Object.values(gameState.corporations).find((c) => c.isPlayer);
   if (!playerCorp) return null;
 
-  const currentTurn = Math.max(0, gameState.turn - 1);
-  const turns = Array.from({ length: historyTurns }, (_, i) => currentTurn - i).filter((t) => t >= 0);
+  if (gameState.turn === 0) {
+    return (
+      <div style={{ padding: 32, color: "var(--text-dim)", fontSize: 13 }}>
+        No financial data yet. End your first turn to see results.
+      </div>
+    );
+  }
+
+  const lastCompletedTurn = gameState.turn - 1;
+  const viewTurn = selectedTurn !== null ? selectedTurn : lastCompletedTurn;
+  // Show the selected turn only (single-turn view with back/forward navigation).
+  const turns = [viewTurn];
 
   const corpBooks = turns.map((t) => computeCorporateBooks(gameState, playerCorp.id, t));
   const latestBooks = corpBooks[0];
@@ -23,12 +35,6 @@ export default function BooksScreen() {
   const firmBooks = selectedFirmId
     ? turns.map((t) => computeFirmBooks(gameState, selectedFirmId, t))
     : null;
-
-  const turnLabel = (turn: number) => {
-    const year = 1980 + Math.floor(turn / 4);
-    const q = (turn % 4) + 1;
-    return `${year} Q${q}`;
-  };
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
@@ -108,16 +114,29 @@ export default function BooksScreen() {
               ? gameState.firms[selectedFirmId]?.name
               : `${playerCorp.name} — Consolidated`}
           </h2>
-          <div style={{ display: "flex", gap: 6 }}>
-            {[1, 4, 8].map((n) => (
-              <button
-                key={n}
-                style={historyTurns === n ? { borderColor: "var(--accent)" } : {}}
-                onClick={() => setHistoryTurns(n)}
-              >
-                {n === 1 ? "This turn" : `Last ${n} turns`}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              disabled={viewTurn <= 0}
+              onClick={() => setSelectedTurn(viewTurn - 1)}
+              style={{ padding: "2px 10px" }}
+            >
+              ‹
+            </button>
+            <span style={{ fontSize: 12, color: "var(--text-dim)", minWidth: 80, textAlign: "center" }}>
+              {turnLabel(viewTurn)}
+            </span>
+            <button
+              disabled={viewTurn >= lastCompletedTurn}
+              onClick={() => setSelectedTurn(Math.min(viewTurn + 1, lastCompletedTurn))}
+              style={{ padding: "2px 10px" }}
+            >
+              ›
+            </button>
+            {viewTurn < lastCompletedTurn && (
+              <button onClick={() => setSelectedTurn(null)} style={{ fontSize: 11 }}>
+                Latest
               </button>
-            ))}
+            )}
           </div>
         </div>
 
@@ -140,14 +159,25 @@ export default function BooksScreen() {
               </div>
               <SummaryRow label="Revenue" value={books.revenue} positive />
               <SummaryRow label="Input costs" value={books.inputCosts} />
+              {books.overheadCosts > 0 && (
+                <SummaryRow label="Overhead" value={books.overheadCosts} />
+              )}
               <SummaryRow label="Operating" value={books.operatingCosts} />
+              {books.capitalExpenditure > 0 && (
+                <SummaryRow label="Capital exp." value={books.capitalExpenditure} />
+              )}
               {"loanInterest" in books && books.loanInterest > 0 && (
                 <SummaryRow label="Interest" value={(books as typeof corpBooks[0]).loanInterest} />
               )}
               <hr style={{ margin: "6px 0" }} />
               <SummaryRow label="Net profit" value={books.netProfit} showSign />
               {"netWorth" in books && (
-                <SummaryRow label="Net worth" value={(books as typeof corpBooks[0]).netWorth} positive />
+                <>
+                  <SummaryRow label={`Net worth — end of ${turnLabel(books.turn)}`} value={(books as typeof corpBooks[0]).netWorth} positive />
+                  <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+                    Reflects current state, not historical snapshot.
+                  </div>
+                </>
               )}
             </div>
           ))}

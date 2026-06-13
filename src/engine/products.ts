@@ -325,3 +325,18 @@ export function isFactoryStorageEligible(id: ProductId): boolean {
 export function isSoldByHarbor(id: ProductId): boolean {
   return PRODUCT_REGISTRY[id].purchaseSources.includes("harbor");
 }
+
+/**
+ * Returns sellable product IDs for a store based on which sections are built.
+ * Single source of truth — used by retail.ts, harborSpotPurchase.ts, and RightPanel.tsx.
+ */
+export function getStoreSellableProducts(
+  firm: { investments: { type: string; status: string }[] }
+): ProductId[] {
+  const has = (t: string) =>
+    firm.investments.some((i) => i.type === t && i.status === "complete");
+  const products: ProductId[] = [];
+  if (has("grocery_section")) products.push("chicken", "chicken_soup", "ice_cream_strawberry");
+  if (has("electronics_section")) products.push("laptop_branded", "printer_branded");
+  return products;
+}

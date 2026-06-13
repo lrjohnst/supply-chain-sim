@@ -97,6 +97,7 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
               startupTurnsRemaining: 0,
               progress:              0,
               intentionallyIdle:     false,
+              quality:               GameConfig.investments.productionLineBaseQuality,
             });
           }
         }
@@ -248,6 +249,7 @@ export function configureProductionLine(
       startupTurnsRemaining: 0,
       progress:              0,
       intentionallyIdle:     false,
+      quality:               GameConfig.investments.productionLineBaseQuality,
     };
     firm.productionLines.push(line);
   }

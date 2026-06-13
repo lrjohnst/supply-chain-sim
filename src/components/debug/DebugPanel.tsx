@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { corporationNetWorth } from "../../engine/utils";
 import { checkWinCondition } from "../../engine/winCondition";
@@ -8,6 +8,7 @@ import { estimateTurnsToBankruptcy } from "../../engine/bankruptcy";
 import { GameConfig } from "../../config/gameConfig";
 import { getHarborSoldProducts, getBasePrice } from "../../engine/harbor";
 import { displayName } from "../../engine/products";
+import { generateId } from "../../engine/utils";
 
 // ================================================================
 // DEBUG PANEL — development only
@@ -99,6 +100,16 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
     { group: "World", label: "Active contracts", value: Object.values(gameState.contracts).filter((c) => c.status === "active").length },
     { group: "World", label: "Open tenders", value: Object.values(gameState.tenders).filter((t) => t.status === "open").length },
     { group: "World", label: "Ledger entries", value: gameState.transactions.length },
+    ...Object.values(gameState.cityNodes)
+      .filter((c) => c.type !== "harbor")
+      .map((c) => {
+        const firmsHere = Object.values(gameState.firms).filter((f) => f.cityNodeId === c.id).length;
+        return {
+          group: "Cities",
+          label: c.name,
+          value: `pop ${(c.population / 1000).toFixed(0)}k | wealth ${c.wealthIndex.toFixed(3)} | demand×${c.demandModifier.toFixed(2)} | firms ${firmsHere}`,
+        };
+      }),
     { group: "Store", label: "Gate queue depth", value: store.gateQueue.length, highlight: store.gateQueue.length > 0 ? "warn" : undefined },
     { group: "Store", label: "Notifications", value: store.notifications.length },
     { group: "Store", label: "Undismissed", value: store.notifications.filter((n) => !n.dismissed).length },
@@ -214,6 +225,72 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
         const pcId = Object.values(gameState.corporations).find((c) => c.isPlayer)!.id;
         const books = computeCorporateBooks(gameState, pcId, gameState.turn - 1);
         useGameStore.setState({ gameState: { ...gameState }, lastBooks: books });
+      },
+    },
+    {
+      group: "Tenders",
+      label: "Spawn alumina tender (2 turns)",
+      action: () => {
+        const closeTurn = gameState.turn + 2;
+        const id = generateId();
+        gameState.tenders[id] = {
+          id,
+          direction: "market",
+          publishedByCorporationId: null,
+          publishedByFirmId: null,
+          product: "alumina",
+          volumeRequired: 500,
+          targetUnitPrice: 92,
+          minQuality: GameConfig.tenderEvents.minQuality,
+          durationTurns: 2,
+          openTurn: gameState.turn,
+          closeTurn,
+          status: "open",
+          bids: [],
+          awardedBids: [],
+          contractDurationTurns: GameConfig.tenders.contractDurationTurns,
+          renewalGapTurns: GameConfig.tenders.renewalGapTurns,
+          cycleNumber: 1,
+          previousTenderId: null,
+          qualityDriftPerCycle: GameConfig.tenders.qualityDriftPerCycle,
+          volumeGrowthFactor: 1.0,
+          incumbentCorporationId: null,
+          incumbentNoticeGiven: false,
+        };
+        useGameStore.setState({ gameState: { ...gameState } });
+      },
+    },
+    {
+      group: "Tenders",
+      label: "Spawn aluminium tender (2 turns)",
+      action: () => {
+        const closeTurn = gameState.turn + 2;
+        const id = generateId();
+        gameState.tenders[id] = {
+          id,
+          direction: "market",
+          publishedByCorporationId: null,
+          publishedByFirmId: null,
+          product: "aluminium",
+          volumeRequired: 300,
+          targetUnitPrice: 195,
+          minQuality: GameConfig.tenderEvents.minQuality,
+          durationTurns: 2,
+          openTurn: gameState.turn,
+          closeTurn,
+          status: "open",
+          bids: [],
+          awardedBids: [],
+          contractDurationTurns: GameConfig.tenders.contractDurationTurns,
+          renewalGapTurns: GameConfig.tenders.renewalGapTurns,
+          cycleNumber: 1,
+          previousTenderId: null,
+          qualityDriftPerCycle: GameConfig.tenders.qualityDriftPerCycle,
+          volumeGrowthFactor: 1.0,
+          incumbentCorporationId: null,
+          incumbentNoticeGiven: false,
+        };
+        useGameStore.setState({ gameState: { ...gameState } });
       },
     },
     {
@@ -369,6 +446,15 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
           </div>
         ))}
 
+        {/* ── Active tender contracts ── */}
+        <TenderContractsSection state={gameState} />
+
+        {/* ── Pending renewals ── */}
+        <PendingRenewalsSection state={gameState} />
+
+        {/* ── Music ── */}
+        <MusicDebugSection />
+
         {/* ── Harbor prices ── */}
         <HarborPricesSection state={gameState} />
 
@@ -387,6 +473,69 @@ export default function DebugPanel({ extraActions = [], extraStats = [] }: Debug
       }}>
         Shift+D to toggle · not in production
       </div>
+    </div>
+  );
+}
+
+// ================================================================
+// Active tender contracts section
+// ================================================================
+
+function TenderContractsSection({ state }: { state: import("../../types").GameState }) {
+  const active = Object.values(state.contracts).filter(
+    (c) => c.originType === "tender" && c.status === "active"
+  );
+  if (active.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ padding: "2px 10px", color: "#ff6666", fontWeight: 700, fontSize: 10, letterSpacing: "0.1em" }}>
+        ACTIVE TENDER CONTRACTS ({active.length})
+      </div>
+      {active.map((c) => {
+        const turnsRemaining = c.startTurn + c.durationTurns - state.turn;
+        return (
+          <div key={c.id} style={{ padding: "2px 10px", borderBottom: "1px solid #1a1f2e", fontSize: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "#8899aa" }}>{displayName(c.product as import("../../types").ProductId)}</span>
+              <span style={{ color: "#ccddee" }}>{Math.round(c.volumePerTurn)}u/t @ €{c.unitPrice.toFixed(2)}</span>
+            </div>
+            <div style={{ color: "#445566" }}>
+              {turnsRemaining}t remaining · origin tender {c.originId?.slice(-6)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ================================================================
+// Pending renewals section
+// ================================================================
+
+function PendingRenewalsSection({ state }: { state: import("../../types").GameState }) {
+  if (state.pendingTenderRenewals.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ padding: "2px 10px", color: "#ff6666", fontWeight: 700, fontSize: 10, letterSpacing: "0.1em" }}>
+        PENDING RENEWALS ({state.pendingTenderRenewals.length})
+      </div>
+      {state.pendingTenderRenewals.map((r, i) => {
+        const corp = r.incumbentCorporationId
+          ? state.corporations[r.incumbentCorporationId]?.name ?? r.incumbentCorporationId.slice(-6)
+          : "none";
+        return (
+          <div key={i} style={{ padding: "2px 10px", borderBottom: "1px solid #1a1f2e", fontSize: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ color: "#8899aa" }}>{displayName(r.productId as import("../../types").ProductId)}</span>
+              <span style={{ color: "#ccddee" }}>turn {r.scheduledForTurn}</span>
+            </div>
+            <div style={{ color: "#445566" }}>incumbent: {corp}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -531,6 +680,59 @@ function HistorySection({ state }: { state: import("../../types").GameState }) {
           <span style={{ color: "#334455", fontFamily: "monospace" }}>
             {history.map((h) => Math.round(h.aiNetWorth / 1000).toString().padStart(5)).join(" ")}
           </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ================================================================
+// Music debug section
+// ================================================================
+import {
+  isPlaying as musicIsPlaying, startMusic, stopMusic, getParams,
+  getCurrentChaosIntensity, currentChaosLevel,
+} from "../../audio/musicEngine";
+import { loadMusicSettings } from "../../audio/musicSettings";
+
+function MusicDebugSection() {
+  const [tick, setTick] = useState(0);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    function loop() { setTick((t) => t + 1); rafRef.current = requestAnimationFrame(loop); }
+    rafRef.current = requestAnimationFrame(loop);
+    return () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); };
+  }, []);
+
+  const playing = musicIsPlaying();
+  const p = getParams();
+  const intensity = getCurrentChaosIntensity();
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ padding: "2px 10px", color: "#e8c84a", fontWeight: 700, fontSize: 10, letterSpacing: "0.1em" }}>
+        MUSIC
+      </div>
+      <div style={{ padding: "2px 10px", fontSize: 10, color: "#8899aa", display: "flex", flexDirection: "column", gap: 2 }}>
+        <div>isPlaying: <span style={{ color: playing ? "#4ae8a0" : "#ff6666" }}>{String(playing)}</span></div>
+        <div>chaosX: <span style={{ color: "#ccddee" }}>{currentChaosLevel.toFixed(4)}</span></div>
+        <div>chaos intensity: <span style={{ color: "#ccddee" }}>{Math.round(intensity * 100)}%</span></div>
+        <div>BPM: <span style={{ color: "#ccddee" }}>{p.bpm}</span></div>
+        <div>enabled: <span style={{ color: p.enabled ? "#4ae8a0" : "#ff6666" }}>{String(p.enabled)}</span></div>
+        <div style={{ marginTop: 4, display: "flex", gap: 6 }}>
+          <button style={{ fontSize: 9, padding: "2px 6px" }} onClick={() => {
+            stopMusic();
+            const saved = loadMusicSettings();
+            startMusic();
+            setTick((t) => t + 1);
+            void saved;
+          }}>
+            Restart Music
+          </button>
+          <button style={{ fontSize: 9, padding: "2px 6px" }} onClick={() => { stopMusic(); setTick((t) => t + 1); }}>
+            Stop
+          </button>
         </div>
       </div>
     </div>

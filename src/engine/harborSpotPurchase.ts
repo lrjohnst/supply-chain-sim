@@ -17,19 +17,9 @@ import { computeFullDeterministicDemand } from "./retail";
 import { addToInventory } from "./utils";
 import { postTransaction } from "./ledger";
 import { requireCash, eliminateCorporation } from "./bankruptcy";
-import { displayName } from "./products";
+import { displayName, getStoreSellableProducts } from "./products";
 
-/** Returns products the store can currently sell, based on built sections. */
-export function getStoreSellableProducts(
-  firm: { investments: { type: string; status: string }[] }
-): ProductId[] {
-  const has = (t: string) =>
-    firm.investments.some((i) => i.type === t && i.status === "complete");
-  const products: ProductId[] = [];
-  if (has("grocery_section"))     products.push("chicken", "chicken_soup", "ice_cream_strawberry");
-  if (has("electronics_section")) products.push("laptop_branded", "printer_branded");
-  return products;
-}
+export { getStoreSellableProducts };
 
 /**
  * For each store with harbor auto-source products enabled, buy estimated demand

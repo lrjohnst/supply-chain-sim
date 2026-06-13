@@ -2,9 +2,10 @@ import { useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { euros } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
+import { computeTotalAssets } from "../../engine/loans";
 
 export default function FinanceScreen() {
-  const { gameState, requestLoan, setTrainingBudget, setMarketingBudget } = useGameStore();
+  const { gameState, requestLoan, setCorporateTrainingIntensity, setMarketingBudget } = useGameStore();
   const [loanAmount, setLoanAmount] = useState("");
   const [loanTurns, setLoanTurns] = useState("8");
   const [loanError, setLoanError] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export default function FinanceScreen() {
   }
 
   const quarterlyPaymentEstimate = (amount: number, turns: number) => {
-    const r = GameConfig.loans.baseAnnualInterestRate / 4;
+    const r = gameState!.currentBaseInterestRate / 4;
     if (r === 0) return amount / turns;
     return (amount * r) / (1 - Math.pow(1 + r, -turns));
   };
@@ -35,6 +36,10 @@ export default function FinanceScreen() {
   const parsedAmount = parseFloat(loanAmount) || 0;
   const parsedTurns = parseInt(loanTurns) || 8;
   const estimatedPayment = parsedAmount > 0 ? quarterlyPaymentEstimate(parsedAmount, parsedTurns) : 0;
+
+  const cfg = GameConfig.loans;
+  const totalAssets = computeTotalAssets(gameState, playerCorp.id);
+  const maxLoanAmount = Math.max(totalAssets, cfg.minAssetFloorForLoan) * cfg.leverageRatioOnAssets;
 
   return (
     <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
@@ -86,7 +91,7 @@ export default function FinanceScreen() {
               <input
                 type="number" value={loanAmount}
                 onChange={(e) => setLoanAmount(e.target.value)}
-                placeholder={`Max ~${euros(playerCorp.cash * GameConfig.loans.maxLoanMultiple)}`}
+                placeholder={`Max ~${euros(maxLoanAmount)}`}
                 style={{ width: "100%" }}
               />
             </div>
@@ -101,7 +106,7 @@ export default function FinanceScreen() {
             </div>
             {parsedAmount > 0 && (
               <div style={{ fontSize: 11, color: "var(--text-dim)", background: "var(--bg)", padding: "8px 10px", borderRadius: 4 }}>
-                Base rate: {(GameConfig.loans.baseAnnualInterestRate * 100).toFixed(1)}% p.a.
+                Base rate: {(gameState.currentBaseInterestRate * 100).toFixed(1)}% p.a.
                 <br />
                 Est. quarterly payment: <strong style={{ color: "var(--warn)" }}>{euros(estimatedPayment)}</strong>
                 <br />
@@ -113,34 +118,43 @@ export default function FinanceScreen() {
           </div>
         </div>
 
-        {/* Training budget */}
+        {/* Training intensity */}
         <div style={cardStyle}>
-          <h3 style={{ marginBottom: 4 }}>Training budget</h3>
+          <h3 style={{ marginBottom: 4 }}>Training Intensity</h3>
           <div style={{ color: "var(--text-dim)", fontSize: 11, marginBottom: 12 }}>
-            Applied equally across all firms. Prevents quality decay. Current: {euros(playerCorp.trainingBudgetPerTurn)}/turn
+            Sets default training intensity for all firms. Per-firm overrides can be set in the firm panel.
+            {playerCorp.corporateTrainingIntensity >= GameConfig.training.qualityThreshold
+              ? " Quality improving."
+              : " Below threshold — quality will decay."}
           </div>
           <input
             type="range"
-            min={0} max={GameConfig.training.maxBudgetPerTurn} step={500}
-            value={playerCorp.trainingBudgetPerTurn}
-            onChange={(e) => setTrainingBudget(parseInt(e.target.value))}
-            style={{ width: "100%" }}
+            min={0} max={100} step={1}
+            value={playerCorp.corporateTrainingIntensity}
+            onChange={(e) => setCorporateTrainingIntensity(parseInt(e.target.value))}
+            style={{ width: "100%", accentColor: "var(--gold)" }}
           />
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
-            <span>€0</span>
+            <span>0%</span>
             <span style={{ color: "var(--text)", fontWeight: 600 }}>
-              {euros(playerCorp.trainingBudgetPerTurn)}/turn
+              {playerCorp.corporateTrainingIntensity}% intensity
             </span>
-            <span>{euros(GameConfig.training.maxBudgetPerTurn)}</span>
+            <span>100%</span>
           </div>
-          {playerCorp.firmIds.length > 0 && (
-            <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>
-              Per firm: {euros(playerCorp.trainingBudgetPerTurn / playerCorp.firmIds.length)}/turn
-              {playerCorp.trainingBudgetPerTurn / playerCorp.firmIds.length < GameConfig.training.budgetPerFirmForEffect
-                ? " — insufficient to prevent quality decay"
-                : " — quality maintained"}
-            </div>
-          )}
+          {playerCorp.firmIds.length > 0 && (() => {
+            // Post-MVP UI: expandable per-firm breakdown showing each firm's name, intensity, and estimated cost per turn.
+            const totalCost = playerCorp.firmIds.reduce((sum, fid) => {
+              const f = gameState.firms[fid];
+              if (!f) return sum;
+              return sum + (GameConfig.training.baseTrainingCostPerTurn[f.type] ?? 0) * (f.trainingIntensity / 100);
+            }, 0);
+            return (
+              <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>
+                Est. training cost: <span style={{ color: "var(--text)" }}>{euros(totalCost)}/turn</span>
+                {" across "}{playerCorp.firmIds.length} firm{playerCorp.firmIds.length !== 1 ? "s" : ""}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Marketing budget */}
@@ -170,8 +184,8 @@ export default function FinanceScreen() {
           <h3 style={{ marginBottom: 8 }}>Milestones</h3>
           <div style={{ display: "flex", gap: 16 }}>
             <MilestoneChip
-              label="€100k revenue"
-              description="Unlocks multi-year contracts"
+              label="€100k gross revenue"
+              description="Unlocks multi-year contracts (cumulative gross revenue)"
               achieved={playerCorp.multiYearContractsUnlocked}
               current={playerCorp.cumulativeRevenue}
               target={GameConfig.game.multiYearContractRevenueThreshold}

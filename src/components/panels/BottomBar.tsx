@@ -1,5 +1,5 @@
 import { useGameStore, selectPlayerCorp, selectTurnLabel } from "../../store/gameStore";
-import { euros } from "../shared/fmt";
+import { euros, turnLabel } from "../shared/fmt";
 import { corporationNetWorth } from "../../engine/utils";
 import { estimateTurnsToBankruptcy } from "../../engine/bankruptcy";
 import { GameConfig } from "../../config/gameConfig";
@@ -7,7 +7,7 @@ import { GameConfig } from "../../config/gameConfig";
 export default function BottomBar() {
   const gameState = useGameStore((s) => s.gameState);
   const playerCorp = useGameStore(selectPlayerCorp);
-  const turnLabel = useGameStore(selectTurnLabel);
+  const currentTurnLabel = useGameStore(selectTurnLabel);
   const lastTickResult = useGameStore((s) => s.lastTickResult);
   const endTurn = useGameStore((s) => s.endTurn);
   const lastBooks = useGameStore((s) => s.lastBooks);
@@ -42,7 +42,7 @@ export default function BottomBar() {
       {/* Turn */}
       <div>
         <span style={{ color: "var(--text-dim)", fontSize: 11 }}>TURN</span>
-        <div style={{ color: "var(--text-head)", fontWeight: 700, fontSize: 14 }}>{turnLabel}</div>
+        <div style={{ color: "var(--text-head)", fontWeight: 700, fontSize: 14 }}>{currentTurnLabel}</div>
       </div>
 
       <div style={{ width: 1, height: 32, background: "var(--border)" }} />
@@ -105,7 +105,7 @@ export default function BottomBar() {
       {/* P&L this turn */}
       {lastBooks && (
         <div>
-          <span style={{ color: "var(--text-dim)", fontSize: 11 }}>LAST TURN P&L</span>
+          <span style={{ color: "var(--text-dim)", fontSize: 11 }}>P&L — {turnLabel(lastBooks.turn)}</span>
           <div style={{
             fontWeight: 600, fontSize: 13,
             color: lastBooks.netProfit >= 0 ? "var(--green)" : "var(--danger)",

@@ -93,6 +93,12 @@ export interface CityNode {
   energyCostMultiplier: number;
   hasHarborAccess: boolean;
   position: { x: number; y: number };
+  /** Purchasing power index (0–1). Wealthier cities buy more consumer goods. */
+  wealthIndex: number;
+  /** Firm type presence history. Post-MVP: drives cluster bonuses. */
+  industrialIdentity: Partial<Record<string, number>>;
+  /** Per-city demand multiplier. Starts at 1.0, drifts via tickCities. */
+  demandModifier: number;
 }
 
 export interface HarborNode {
@@ -193,6 +199,12 @@ export interface ProductionLineSetup {
    * null = no pending change.
    */
   pendingRecipe: RecipeKey | null;
+  /**
+   * Output quality of this production line (0–1). Starts at productionLineBaseQuality.
+   * Improves with quality_lab and training budget; decays without training.
+   * Checked against contract quality thresholds and tender min quality.
+   */
+  quality: number;
 }
 
 // ============================================================
@@ -212,13 +224,15 @@ export interface InventoryLine {
 export type TransactionCategory =
   | "revenue"
   | "input_cost"
+  | "overhead"
   | "operating_cost"
   | "loan_interest"
   | "loan_repayment"
   | "investment_cost"
   | "training_cost"
   | "marketing_cost"
-  | "transport_cost";
+  | "transport_cost"
+  | "fine_payment";
 
 export interface Transaction {
   id: EntityId;
@@ -275,6 +289,18 @@ export interface Contract {
   durationTurns: number;
   isInternal: boolean;
   turnsExecuted: number;
+  /** Links this contract back to its origin. null for manually-created contracts. */
+  originId: EntityId | null;
+  /** Which system created this contract. Extensible for future mechanisms. */
+  originType: "tender" | "direct" | "sourcing" | null;
+  /** Whether the one-turn advance renewal notice has been sent for this contract. */
+  incumbentNoticeGiven: boolean;
+  /** Last turn a breach risk warning was emitted for this contract. 0 = never. */
+  lastBreachWarnTurn: number;
+  /** Cumulative units short-delivered across all turns. Resets on a full-delivery turn. */
+  cumulativeVolumeShortfall: number;
+  /** Consecutive turns where seller quality was below threshold. Resets when quality recovers. */
+  consecutiveQualityFailureTurns: number;
 }
 
 // ============================================================
@@ -297,6 +323,8 @@ export interface Tender {
   id: EntityId;
   direction: TenderDirection;
   publishedByCorporationId: EntityId | null;
+  /** The specific buyer firm for sourcing tenders. Null for market tenders. */
+  publishedByFirmId: EntityId | null;
   product: ProductId;
   volumeRequired: number;
   targetUnitPrice: number;
@@ -307,6 +335,34 @@ export interface Tender {
   status: TenderStatus;
   bids: TenderBid[];
   awardedBids: TenderBid[];
+  // ---- Renewal cycle fields ----
+  /** Duration of the supply contract spawned when this tender is awarded. */
+  contractDurationTurns: number;
+  /** Bidding window for the renewal tender (turns between contract expiry and renewal close). */
+  renewalGapTurns: number;
+  /** Which renewal cycle this is. Starts at 1. */
+  cycleNumber: number;
+  /** The tender this was renewed from. null for the first cycle. */
+  previousTenderId: EntityId | null;
+  /** How much minQuality increases each renewal cycle. */
+  qualityDriftPerCycle: number;
+  /** Volume growth factor applied to produce this tender's volumeRequired from the prior cycle. */
+  volumeGrowthFactor: number;
+  /** Corporation that held the previous contract. Gets advance notice of renewal. */
+  incumbentCorporationId: EntityId | null;
+  /** Whether the advance renewal notice has been pushed to the incumbent. */
+  incumbentNoticeGiven: boolean;
+}
+
+// ============================================================
+// Tender renewals
+// ============================================================
+
+export interface PendingTenderRenewal {
+  originalTenderId: EntityId;
+  scheduledForTurn: number;
+  incumbentCorporationId: EntityId | null;
+  productId: ProductId;
 }
 
 // ============================================================
@@ -319,12 +375,11 @@ export interface Firm {
   cityNodeId: EntityId;
   type: FirmType;
   name: string;
-  quality: number;
   investments: Investment[];
   // Production line configs — one entry per completed production_line investment
   productionLines: ProductionLineSetup[];
   inventory: InventoryLine[];
-  activeContractIds: EntityId[];
+  /** Reserved for future tender tracking. Currently unused by the engine. */
   activeTenderIds: EntityId[];
   sellToCompetitors: boolean;
   /** Retail price overrides (player-set). Falls back to config benchmark if absent. */
@@ -340,6 +395,10 @@ export interface Firm {
    * from harbor each turn as a spot purchase. Stores only.
    */
   harborAutoSource: Partial<Record<ProductId, boolean>>;
+  /** Training intensity for this firm (0–100). Default: corporation's corporateTrainingIntensity. */
+  trainingIntensity: number;
+  /** True when the player has individually overridden this firm's training intensity. */
+  trainingIntensityOverridden: boolean;
 }
 
 // ============================================================
@@ -353,9 +412,9 @@ export interface Corporation {
   cash: number;
   firmIds: EntityId[];
   loanIds: EntityId[];
-  activeContractIds: EntityId[];
   cumulativeRevenue: number;
-  trainingBudgetPerTurn: number;
+  /** Corporate-wide training intensity (0–100). Applied to new firms and non-overridden firms. */
+  corporateTrainingIntensity: number;
   marketingBudgetPerTurn: number;
   multiYearContractsUnlocked: boolean;
   /** AI only. Set when the AI cannot meet an obligation. Game continues without it. */
@@ -411,6 +470,12 @@ export interface GameState {
   activeHarborShocks: ActiveHarborShock[];
   /** Rolling economic history (capped at config window). */
   economicHistory: EconomicSnapshot[];
+  /** Current base interest rate, updated by macro events. New loans use this. */
+  currentBaseInterestRate: number;
+  /** Notifications generated during this tick. Read and cleared by tick(). */
+  pendingNotifications: string[];
+  /** Tender renewals queued for posting. Processed by processRenewals() in tick.ts. */
+  pendingTenderRenewals: PendingTenderRenewal[];
 }
 
 // ============================================================
@@ -422,7 +487,9 @@ export interface FirmBooks {
   turn: number;
   revenue: number;
   inputCosts: number;
+  overheadCosts: number;
   operatingCosts: number;
+  capitalExpenditure: number;
   netProfit: number;
   lines: Transaction[];
 }
@@ -432,7 +499,9 @@ export interface CorporateBooks {
   turn: number;
   revenue: number;
   inputCosts: number;
+  overheadCosts: number;
   operatingCosts: number;
+  capitalExpenditure: number;
   loanInterest: number;
   netProfit: number;
   netWorth: number;

@@ -6,13 +6,30 @@ import { takeLoan } from "./loans";
 import { generateId } from "./utils";
 import { makeFirm } from "./newGame";
 
+// Post-MVP: AI should submit tender bids for industrial output when it has relevant production lines.
+
 /** Run one turn of AI decision-making. Called after the player ends their turn. */
 export function runAI(state: GameState): void {
   const aiCorp = Object.values(state.corporations).find((c) => !c.isPlayer);
   if (!aiCorp || aiCorp.eliminated) return;
 
+  enableAutoSourceForAIStores(state, aiCorp.id);
   bidOnOpenTenders(state, aiCorp.id);
   expandIfOpportunity(state, aiCorp.id);
+}
+
+function enableAutoSourceForAIStores(state: GameState, corpId: string): void {
+  // Post-MVP: AI auto-sourcing should be driven by product registry, not hardcoded product IDs.
+  const corp = state.corporations[corpId];
+  for (const firmId of corp.firmIds) {
+    const firm = state.firms[firmId];
+    if (firm.type !== "store") continue;
+    if (firm.investments.some((i) => i.type === "grocery_section" && i.status === "complete")) {
+      if (!firm.harborAutoSource.ice_cream_strawberry) {
+        firm.harborAutoSource.ice_cream_strawberry = true;
+      }
+    }
+  }
 }
 
 // ------------------------------------------------------------------
@@ -43,6 +60,7 @@ function bidOnOpenTenders(state: GameState, corpId: string): void {
       (l) => l.product === tender.product
     );
     if (!inventoryLine || inventoryLine.quantity <= 0) continue;
+    // Post-MVP: AI should reserve inventory for existing contracts before bidding on new tenders.
 
     const unitCost = inventoryLine.unitCost;
     const minPrice = unitCost * (1 + cfg.tenderMarginMinimum);
@@ -70,7 +88,7 @@ function expandIfOpportunity(state: GameState, corpId: string): void {
     0
   );
   const revenue = corp.cumulativeRevenue;
-  const debtRatio = revenue > 0 ? totalDebt / revenue : totalDebt / 1;
+  const debtRatio = revenue > 0 ? totalDebt / revenue : totalDebt > 0 ? 1.0 : 0;
 
   if (debtRatio > GameConfig.ai.debtToRevenueRatioLimit) return;
 
@@ -100,12 +118,11 @@ function expandIfOpportunity(state: GameState, corpId: string): void {
 
   if (existingFirmsInCity >= cityNode.firmSlots) return;
 
-  // Build a store (lowest barrier to entry)
-  const storeCost = 10_000; // base firm establishment cost
+  // Post-MVP: AI should build factories and farms to participate in industrial supply chains.
+  const storeCost = GameConfig.ai.firmEstablishmentCost;
   if (corp.cash < storeCost) {
-    // Consider a small loan
-    if (corp.cash >= 5_000) {
-      takeLoan(state, corpId, 30_000, 8);
+    if (corp.cash >= storeCost / 2) {
+      takeLoan(state, corpId, GameConfig.ai.emergencyLoanAmount, GameConfig.loans.baseAnnualInterestRate * 100);
     }
     return;
   }
@@ -148,6 +165,6 @@ function buildFirm(
   const corp = state.corporations[corpId];
   const firmId = generateId();
   const name = `${corp.name} ${type.charAt(0).toUpperCase() + type.slice(1)}`;
-  state.firms[firmId] = makeFirm(firmId, corpId, cityNodeId, type, name);
+  state.firms[firmId] = makeFirm(firmId, corpId, cityNodeId, type, name, corp.corporateTrainingIntensity);
   corp.firmIds.push(firmId);
 }

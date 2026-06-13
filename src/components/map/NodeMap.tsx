@@ -36,10 +36,19 @@ export default function NodeMap() {
   const onWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    setView((v) => ({
-      ...v,
-      scale: Math.max(0.4, Math.min(3, v.scale * factor)),
-    }));
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    // Cursor position in SVG viewBox space
+    const cx = (e.clientX - rect.left) * (MAP_W / rect.width);
+    const cy = (e.clientY - rect.top) * (MAP_H / rect.height);
+    setView((v) => {
+      const newScale = Math.max(0.4, Math.min(3, v.scale * factor));
+      // Solve for new pan so the world point under the cursor stays fixed
+      const worldX = (cx - v.x) / v.scale;
+      const worldY = (cy - v.y) / v.scale;
+      return { scale: newScale, x: cx - worldX * newScale, y: cy - worldY * newScale };
+    });
   }, []);
 
   if (!gameState) return null;

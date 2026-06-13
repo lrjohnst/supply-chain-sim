@@ -8,10 +8,13 @@ export function computeFirmBooks(state: GameState, firmId: string, turn: number)
 
   let revenue = 0;
   let inputCosts = 0;
+  let overheadCosts = 0;
   let operatingCosts = 0;
+  let capitalExpenditure = 0;
 
+  // Loan interest and repayment are intentionally absent here. Loans belong to corporations, not firms.
   for (const tx of lines) {
-    if (tx.total === 0) continue; // internal cost-basis transfers
+    if (tx.total === 0) continue; // internal cost-basis transfers and COGS records
     switch (tx.category) {
       case "revenue":
         revenue += tx.total;
@@ -19,10 +22,27 @@ export function computeFirmBooks(state: GameState, firmId: string, turn: number)
       case "input_cost":
         inputCosts += Math.abs(tx.total);
         break;
+      case "overhead":
+        overheadCosts += Math.abs(tx.total);
+        break;
       case "operating_cost":
-      case "investment_cost":
+        // Includes investment operating costs, startup/commissioning costs.
+        // Note: startup costs are posted as operating_cost, not a separate category.
         operatingCosts += Math.abs(tx.total);
         break;
+      case "training_cost":
+        // Per-firm training cost — posted at firm level since the training redesign.
+        operatingCosts += Math.abs(tx.total);
+        break;
+      case "transport_cost":
+        // transport_cost is a firm-level category; buckets here when posted.
+        operatingCosts += Math.abs(tx.total);
+        break;
+      case "investment_cost":
+        capitalExpenditure += Math.abs(tx.total);
+        break;
+      // marketing_cost is corporate-level only — will not appear in firm transactions.
+      // loan_interest and loan_repayment are corporate-level only — intentionally absent.
     }
   }
 
@@ -31,8 +51,10 @@ export function computeFirmBooks(state: GameState, firmId: string, turn: number)
     turn,
     revenue,
     inputCosts,
+    overheadCosts,
     operatingCosts,
-    netProfit: revenue - inputCosts - operatingCosts,
+    capitalExpenditure,
+    netProfit: revenue - inputCosts - overheadCosts - operatingCosts - capitalExpenditure,
     lines,
   };
 }
@@ -48,7 +70,9 @@ export function computeCorporateBooks(
 
   let revenue = 0;
   let inputCosts = 0;
+  let overheadCosts = 0;
   let operatingCosts = 0;
+  let capitalExpenditure = 0;
   let loanInterest = 0;
 
   for (const tx of allLines) {
@@ -60,12 +84,17 @@ export function computeCorporateBooks(
       case "input_cost":
         inputCosts += Math.abs(tx.total);
         break;
+      case "overhead":
+        overheadCosts += Math.abs(tx.total);
+        break;
       case "operating_cost":
-      case "investment_cost":
       case "training_cost":
       case "marketing_cost":
       case "transport_cost":
         operatingCosts += Math.abs(tx.total);
+        break;
+      case "investment_cost":
+        capitalExpenditure += Math.abs(tx.total);
         break;
       case "loan_interest":
         loanInterest += Math.abs(tx.total);
@@ -83,9 +112,14 @@ export function computeCorporateBooks(
     turn,
     revenue,
     inputCosts,
+    overheadCosts,
     operatingCosts,
+    capitalExpenditure,
     loanInterest,
-    netProfit: revenue - inputCosts - operatingCosts - loanInterest,
+    netProfit: revenue - inputCosts - overheadCosts - operatingCosts - capitalExpenditure - loanInterest,
+    // Post-MVP: net worth should be read from EconomicHistory for the selected turn rather than
+    // always reflecting current state. Currently net worth is always current regardless of which
+    // historical turn is being viewed.
     netWorth: corporationNetWorth(state, corporationId),
     firmBooks,
     lines: allLines,

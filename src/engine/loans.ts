@@ -4,14 +4,39 @@ import { generateId } from "./utils";
 import { postTransaction } from "./ledger";
 import { requireCash, eliminateCorporation } from "./bankruptcy";
 
+/** Total asset value for a corporation: cash + investments at cost + inventory at cost. */
+export function computeTotalAssets(state: GameState, corporationId: string): number {
+  const corp = state.corporations[corporationId];
+  let assets = corp.cash;
+  for (const firmId of corp.firmIds) {
+    const firm = state.firms[firmId];
+    for (const inv of firm.investments) assets += inv.costPaid;
+    for (const line of firm.inventory) assets += line.quantity * line.unitCost;
+  }
+  return assets;
+}
+
 /** Accrue interest and process quarterly loan payments. */
 export function processLoans(state: GameState): void {
   for (const loan of Object.values(state.loans)) {
     if (loan.outstandingBalance <= 0) continue;
 
-    const quarterlyRate = loan.annualInterestRate / GameConfig.game.quartersPerYear;
+    const quartersPerYear = GameConfig.game.quartersPerYear;
+    const quarterlyRate = loan.annualInterestRate / quartersPerYear;
+    const turnsRemaining = loan.durationTurns - (state.turn - loan.turnTaken);
+
+    // Recalculate payment each turn from current rate + remaining balance + remaining turns.
+    // This makes existing loans variable-rate: a rate shock immediately changes the payment.
+    const quarterlyPayment =
+      turnsRemaining > 0
+        ? quarterlyRate > 0
+          ? (loan.outstandingBalance * quarterlyRate) /
+            (1 - Math.pow(1 + quarterlyRate, -turnsRemaining))
+          : loan.outstandingBalance / turnsRemaining
+        : loan.outstandingBalance; // final turn: repay remainder in full
+
     const interest = loan.outstandingBalance * quarterlyRate;
-    const principal = loan.quarterlyPayment - interest;
+    const principal = quarterlyPayment - interest;
     const principalRepaid = Math.min(Math.max(principal, 0), loan.outstandingBalance);
     const totalDue = interest + principalRepaid;
 
@@ -58,9 +83,12 @@ export function processLoans(state: GameState): void {
       });
     }
 
-    // Close out the loan if balance is negligible
+    // Close out and remove the loan when balance is negligible
     if (loan.outstandingBalance < 0.01) {
       loan.outstandingBalance = 0;
+      delete state.loans[loan.id];
+      const loanCorp = state.corporations[loan.corporationId];
+      if (loanCorp) loanCorp.loanIds = loanCorp.loanIds.filter((id) => id !== loan.id);
     }
   }
 }
@@ -79,12 +107,13 @@ export function takeLoan(
     return `Loan duration must be between ${cfg.minDurationTurns} and ${cfg.maxDurationTurns} turns.`;
   }
 
-  const maxLoan = corp.cash * cfg.maxLoanMultiple;
+  const totalAssets = computeTotalAssets(state, corporationId);
+  const maxLoan = Math.max(totalAssets, cfg.minAssetFloorForLoan) * cfg.leverageRatioOnAssets;
   if (principal > maxLoan) {
-    return `Maximum loan amount is €${maxLoan.toLocaleString()} (${cfg.maxLoanMultiple}× current cash).`;
+    return `Maximum loan amount is €${Math.round(maxLoan).toLocaleString()} (${cfg.leverageRatioOnAssets}× total assets).`;
   }
 
-  const currentRate = cfg.baseAnnualInterestRate;
+  const currentRate = state.currentBaseInterestRate;
   const quarterlyRate = currentRate / GameConfig.game.quartersPerYear;
 
   // Fixed payment annuity formula

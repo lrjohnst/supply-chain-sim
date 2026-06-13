@@ -22,15 +22,41 @@ export default function ProductsScreen() {
   // For each product, find which player stores sell it and last turn's revenue
   type ProductRow = {
     product: ProductId;
-    firms: string[];       // firm names
+    firms: string[];
     price: number;
     benchmark: number;
     soldLastTurn: number;
     revenueLastTurn: number;
-    margin: number;        // (price - harborOrCost) / price, approximate
+    margin: number;
+    trend: { symbol: string; color: string };
+  };
+
+  type AIRow = {
+    product: ProductId;
+    firms: string[];
+    soldLastTurn: number;
+    revenueLastTurn: number;
+    trend: { symbol: string; color: string };
   };
 
   const lastTurn = Math.max(0, gameState.turn - 1);
+
+  /** Revenue sum for a corporation + product across a single turn. */
+  function revenueForTurn(corpId: string, product: ProductId, turn: number): number {
+    return gameState.transactions
+      .filter((tx) => tx.turn === turn && tx.corporationId === corpId && tx.category === "revenue" && tx.product === product)
+      .reduce((s, tx) => s + tx.total, 0);
+  }
+
+  /** ↑ / ↓ / — based on comparing turn t-1 vs t-3 revenue. */
+  function trendIndicator(corpId: string, product: ProductId): { symbol: string; color: string } {
+    const t1 = revenueForTurn(corpId, product, lastTurn);
+    const t3 = revenueForTurn(corpId, product, Math.max(0, lastTurn - 2));
+    if (lastTurn < 2) return { symbol: "—", color: "var(--text-dim)" };
+    if (t1 > t3 + 0.01) return { symbol: "↑", color: "var(--green)" };
+    if (t1 < t3 - 0.01) return { symbol: "↓", color: "var(--danger)" };
+    return { symbol: "—", color: "var(--text-dim)" };
+  }
 
   function buildPlayerRows(): ProductRow[] {
     return RETAIL_PRODUCTS.map((product) => {
@@ -46,12 +72,9 @@ export default function ProductsScreen() {
       const harborCost = getBasePrice(product);
       const margin = price > 0 ? (price - harborCost) / price : 0;
 
-      // Revenue from ledger last turn
       const txs = gameState.transactions.filter(
-        (tx) => tx.turn === lastTurn &&
-          tx.corporationId === playerCorp.id &&
-          tx.category === "revenue" &&
-          tx.product === product
+        (tx) => tx.turn === lastTurn && tx.corporationId === playerCorp.id &&
+          tx.category === "revenue" && tx.product === product
       );
       const revenueLastTurn = txs.reduce((s, tx) => s + tx.total, 0);
       const soldLastTurn = txs.reduce((s, tx) => s + (tx.quantity ?? 0), 0);
@@ -60,25 +83,28 @@ export default function ProductsScreen() {
         product, benchmark, price, margin,
         firms: sellingFirms.map((f) => f.name),
         soldLastTurn, revenueLastTurn,
+        trend: trendIndicator(playerCorp.id, product),
       };
     }).filter((r) => r.firms.length > 0);
   }
 
-  function buildAIRows() {
+  function buildAIRows(): AIRow[] {
     return RETAIL_PRODUCTS.map((product) => {
       const sellingFirms = aiFirms.filter((f) =>
         f.type === "store" &&
         f.investments.some((i) => i.status === "complete" && investmentCoversProduct(i.type, product))
       );
       const txs = aiCorp ? gameState.transactions.filter(
-        (tx) => tx.turn === lastTurn &&
-          tx.corporationId === aiCorp.id &&
-          tx.category === "revenue" &&
-          tx.product === product
+        (tx) => tx.turn === lastTurn && tx.corporationId === aiCorp.id &&
+          tx.category === "revenue" && tx.product === product
       ) : [];
       const soldLastTurn = txs.reduce((s, tx) => s + (tx.quantity ?? 0), 0);
       const revenueLastTurn = txs.reduce((s, tx) => s + tx.total, 0);
-      return { product, firms: sellingFirms.map((f) => f.name), soldLastTurn, revenueLastTurn };
+      return {
+        product, firms: sellingFirms.map((f) => f.name),
+        soldLastTurn, revenueLastTurn,
+        trend: aiCorp ? trendIndicator(aiCorp.id, product) : { symbol: "—", color: "var(--text-dim)" },
+      };
     }).filter((r) => r.firms.length > 0);
   }
 
@@ -109,6 +135,7 @@ export default function ProductsScreen() {
                   <th style={th}>Sold</th>
                   <th style={th}>Revenue</th>
                   <th style={th}>Margin</th>
+                  <th style={{ ...th, textAlign: "center" }}>Trend</th>
                 </tr>
               </thead>
               <tbody>
@@ -125,6 +152,9 @@ export default function ProductsScreen() {
                       color: row.margin > 0.3 ? "var(--green)" : row.margin > 0.1 ? "var(--warn)" : "var(--danger)",
                     }}>
                       {(row.margin * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ ...td, textAlign: "center", color: row.trend.color, fontWeight: 700 }}>
+                      {row.trend.symbol}
                     </td>
                   </tr>
                 ))}
@@ -148,6 +178,7 @@ export default function ProductsScreen() {
                   <th style={th}>Firms</th>
                   <th style={th}>Sold</th>
                   <th style={th}>Revenue</th>
+                  <th style={{ ...th, textAlign: "center" }}>Trend</th>
                 </tr>
               </thead>
               <tbody>
@@ -157,6 +188,9 @@ export default function ProductsScreen() {
                     <td style={{ ...td, color: "var(--text-dim)" }}>{row.firms.join(", ")}</td>
                     <td style={td}>{qty(row.soldLastTurn)}</td>
                     <td style={{ ...td, color: "var(--red)" }}>{euros(row.revenueLastTurn)}</td>
+                    <td style={{ ...td, textAlign: "center", color: row.trend.color, fontWeight: 700 }}>
+                      {row.trend.symbol}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -33,10 +33,29 @@ export const GameConfig = {
   ai: {
     startingCash: 100_000,
     startingCorporationName: "Rival Corp",
-    startingCityNodeId: "city_b",
+    startingCityId: "city_b",
     seededChains: ["ice_cream"] as string[],
     debtToRevenueRatioLimit: 2.0,
     tenderMarginMinimum: 0.05,
+    firmEstablishmentCost: 10_000,
+    emergencyLoanAmount: 30_000,
+  },
+
+  // ----------------------------------------------------------
+  // Music
+  // ----------------------------------------------------------
+  music: {
+    bpm: 174,
+    chaosR: 3.82,
+    chaosInitialX: 0.7,
+    melodyGain: 0.18,
+    bassGain: 0.22,
+    arpGain: 0.10,
+    percGain: 0.9,
+    chaosFillThreshold: 0.82,
+    chaosStabThreshold: 0.88,
+    masterVolume: 0.8,
+    enabled: true,
   },
 
   // ----------------------------------------------------------
@@ -158,6 +177,9 @@ export const GameConfig = {
      */
     productionLineStartupTurns: 2,
 
+    /** Quality every production line starts at when first created. */
+    productionLineBaseQuality: 0.4,
+
     /**
      * Startup cost per turn = normal operating cost × startupCostFraction.
      * Charged each turn the line is in the starting_up phase.
@@ -199,6 +221,18 @@ export const GameConfig = {
   },
 
   firmInvestmentSlotLimit: 8,
+
+  // ----------------------------------------------------------
+  // Firm base overhead — flat cost per turn from the moment a
+  // firm is built, regardless of investments or activity.
+  // Represents rent, security, basic utilities, minimum staff.
+  // ----------------------------------------------------------
+  firmBaseOverhead: {
+    factory: 500,
+    farm:    200,
+    store:   300,
+    mine:    400,
+  } satisfies Record<FirmType, number>,
 
   // ----------------------------------------------------------
   // Valid investment types per firm type
@@ -363,7 +397,10 @@ export const GameConfig = {
   // ----------------------------------------------------------
   loans: {
     baseAnnualInterestRate: 0.08,
-    maxLoanMultiple: 3,
+    /** Leverage ratio applied to total asset value (cash + investments at cost + inventory at cost). */
+    leverageRatioOnAssets: 3,
+    /** Minimum total asset value used in max loan calculation. Allows loans even with near-zero cash. */
+    minAssetFloorForLoan: 15_000,
     minDurationTurns: 4,
     maxDurationTurns: 40,
   },
@@ -382,9 +419,14 @@ export const GameConfig = {
   // Training
   // ----------------------------------------------------------
   training: {
-    minBudgetPerTurn: 0,
-    maxBudgetPerTurn: 20_000,
-    budgetPerFirmForEffect: 1_000,
+    baseTrainingCostPerTurn: {
+      farm:    200,
+      factory: 400,
+      store:   150,
+      mine:    300,
+    } as Record<string, number>,
+    defaultCorporateIntensity: 50,
+    qualityThreshold: 50,
   },
 
   // ----------------------------------------------------------
@@ -450,12 +492,38 @@ export const GameConfig = {
   tenderEvents: {
     checkFrequencyTurns: 4,
     probability: 0.20,
+    minQuality: 0.4,
+  },
+
+  // ----------------------------------------------------------
+  // Tender contract parameters
+  // ----------------------------------------------------------
+  tenders: {
+    contractDurationTurns: 8,
+    renewalGapTurns: 4,
+    qualityDriftPerCycle: 0.02,
+    volumeGrowthMean: 1.05,
+    volumeGrowthStdDev: 0.1,
+    incumbentNoticeTurns: 1,
+    /** Warn when line quality is within this margin above the contract threshold. */
+    breachWarningQualityMargin: 0.1,
+    /** Re-emit breach warnings at most once every N turns while risk persists. */
+    breachWarningIntervalTurns: 5,
   },
 
   // ----------------------------------------------------------
   // Economic history rolling window
   // ----------------------------------------------------------
   history: {
+    rollingWindowTurns: 40,
+  },
+
+  // ----------------------------------------------------------
+  // Transaction ledger rolling window
+  // Keep at least as many turns as the bankruptcy lookback (10).
+  // Trimming prevents unbounded growth over long games.
+  // ----------------------------------------------------------
+  transactions: {
     rollingWindowTurns: 40,
   },
 
@@ -480,34 +548,33 @@ export const GameConfig = {
   },
 
   // ----------------------------------------------------------
+  // Contracts — breach thresholds and fines
+  // ----------------------------------------------------------
+  contracts: {
+    /** Fine paid by the breaching seller to the harmed buyer on breach declaration. */
+    breachFineAmount: 5_000,
+    /** Cumulative units short-delivered before breach conditions are met. */
+    volumeShortfallBreachThreshold: 50,
+    /** Consecutive turns with quality below threshold before breach conditions are met. */
+    qualityBreachConsecutiveTurns: 3,
+  },
+
+  // ----------------------------------------------------------
+  // City wealth dynamics
+  // ----------------------------------------------------------
+  cities: {
+    wealthNoiseStdDev: 0.005,
+    wealthMin: 0.1,
+    wealthMax: 0.9,
+  },
+
+  // ----------------------------------------------------------
   // Bankruptcy early warning
   // ----------------------------------------------------------
   bankruptcy: {
     warningThresholdTurns: 10,  // warn if < 10 turns of cash remain at current burn rate
     lookbackTurns: 10,          // turns of history used to estimate average burn rate
   },
-
-  // ----------------------------------------------------------
-  // Seeded tenders at game start
-  // ----------------------------------------------------------
-  startingTenders: [
-    {
-      product: "alumina" as ProductId,
-      volumeRequired: 500,
-      targetUnitPrice: 92,
-      minQuality: 0.4,
-      durationTurns: 8,
-      closeTurn: 12,
-    },
-    {
-      product: "aluminium" as ProductId,
-      volumeRequired: 300,
-      targetUnitPrice: 195,
-      minQuality: 0.4,
-      durationTurns: 8,
-      closeTurn: 12,
-    },
-  ],
 
 } as const;
 
