@@ -1,4 +1,4 @@
-import type { InvestmentType, FirmType, ProductId, RecipeKey } from "../types";
+import type { InvestmentType, FirmType, ProductId, RecipeKey, MapConfig } from "../types";
 
 // ============================================================
 // All gameplay parameters live here. No numeric constants
@@ -33,7 +33,6 @@ export const GameConfig = {
   ai: {
     startingCash: 100_000,
     startingCorporationName: "Rival Corp",
-    startingCityId: "city_b",
     seededChains: ["ice_cream"] as string[],
     debtToRevenueRatioLimit: 2.0,
     tenderMarginMinimum: 0.05,
@@ -62,12 +61,11 @@ export const GameConfig = {
   // Map / transport
   // ----------------------------------------------------------
   map: {
-    // Cost per unit per link traversed (non-harbor-access nodes pay this
-    // for every link between their node and the nearest harbor-access node)
     transportCostPerLink: 0.15,        // € per unit per link
     linkCostReductionPerLevel: 0.15,   // 15% reduction per upgrade level
     maxLinkInvestmentLevel: 3,
-    linkCapacityBase: 500,
+    linkCapacityHighway: 150,
+    linkCapacityRoad:    100,
     linkCapacityPerLevel: 250,
   },
 
@@ -77,12 +75,25 @@ export const GameConfig = {
   spotPurchasePremium: 0.12,   // 12% above contract/harbor price
 
   // ----------------------------------------------------------
-  // Firm slots by node size
+  // Store slot system
   // ----------------------------------------------------------
-  firmSlots: {
-    large_city: 6,
-    medium_city: 4,
-    town: 2,
+  storeSlots: {
+    /** Units of city store capacity consumed by each store size. */
+    citySlotsBySize: { small: 1, medium: 2, large: 3 } as Record<"small"|"medium"|"large", number>,
+    /** Demand multiplier by location class. */
+    locationMultiplier: { A: 1.6, B: 1.0, C: 0.4 } as Record<"A"|"B"|"C", number>,
+    /** Demand multiplier by store size. */
+    sizeMultiplier: { small: 0.7, medium: 1.0, large: 1.2 } as Record<"small"|"medium"|"large", number>,
+    /** Elasticity scaling by location class. A-class consumers less price-sensitive; C-class more. */
+    elasticityScaling: { A: 0.6, B: 1.0, C: 1.4 } as Record<"A"|"B"|"C", number>,
+    /** Investment slot limit by store size (replaces flat firmInvestmentSlotLimit for stores). */
+    investmentSlotsBySize: { small: 2, medium: 4, large: 8 } as Record<"small"|"medium"|"large", number>,
+    /** Max section expansion investments per section type, by store size. */
+    expansionMaxBySize: { small: 1, medium: 2, large: 3 } as Record<"small"|"medium"|"large", number>,
+    /** Build cost by store size. */
+    buildCostBySize: { small: 8_000, medium: 12_000, large: 20_000 } as Record<"small"|"medium"|"large", number>,
+    /** Land cost by location class, reflecting desirability. Added to buildCostBySize for total store cost. */
+    locationClassCost: { A: 80_000, B: 40_000, C: 15_000 } as Record<"A"|"B"|"C", number>,
   },
 
   // ----------------------------------------------------------
@@ -114,6 +125,8 @@ export const GameConfig = {
       pharmacy_section: 30_000,
       warehouse_capacity: 12_000,
       training_store: 5_000,
+      grocery_section_expansion: 15_000,
+      electronics_section_expansion: 18_000,
     } satisfies Record<InvestmentType, number>,
 
     buildTurns: {
@@ -141,6 +154,8 @@ export const GameConfig = {
       pharmacy_section: 2,
       warehouse_capacity: 1,
       training_store: 1,
+      grocery_section_expansion: 2,
+      electronics_section_expansion: 2,
     } satisfies Record<InvestmentType, number>,
 
     maxPerFirm: {
@@ -168,6 +183,9 @@ export const GameConfig = {
       pharmacy_section: 1,
       warehouse_capacity: 3,
       training_store: 1,
+      // Expansions: absolute max is 3 (large store); size limit enforced in investments.ts
+      grocery_section_expansion: 3,
+      electronics_section_expansion: 3,
     } satisfies Record<InvestmentType, number>,
 
     /**
@@ -217,6 +235,8 @@ export const GameConfig = {
       pharmacy_section: 500,
       warehouse_capacity: 150,
       training_store: 200,
+      grocery_section_expansion: 250,
+      electronics_section_expansion: 300,
     } satisfies Record<InvestmentType, number>,
   },
 
@@ -252,7 +272,7 @@ export const GameConfig = {
     store: [
       "grocery_section", "electronics_section", "cosmetics_section", "hardware_section",
       "clothing_section", "pharmacy_section", "warehouse_capacity", "training_store",
-      "barcode_scanning",
+      "barcode_scanning", "grocery_section_expansion", "electronics_section_expansion",
     ],
     mine: [],
   } satisfies Record<FirmType, InvestmentType[]>,
@@ -265,9 +285,9 @@ export const GameConfig = {
   // ----------------------------------------------------------
   harborBasePrices: {
     bauxite:              31,
-    laptop_whitelabel:   320,
-    ice_cream_strawberry:  1.4,
-    printer_branded:      95,
+    laptop_whitelabel:   280,
+    ice_cream_strawberry:  1.80,
+    printer_branded:      85,
   } as Partial<Record<ProductId, number>>,
 
   // ----------------------------------------------------------
@@ -430,6 +450,27 @@ export const GameConfig = {
   },
 
   // ----------------------------------------------------------
+  // Store training & retail capacity
+  // ----------------------------------------------------------
+  storeTraining: {
+    tippingPoint: 0.20,              // slider below this (as a fraction) causes decay
+    maxGrowthPerTurn: 0.022,         // max trainedFraction gain per turn at slider 100% (~45 turns to fully train)
+    maxDecayPerTurn: 0.02,           // max trainedFraction loss per turn at slider 0%
+    capacityMin: 0.50,               // trainedFraction=0 → maxThroughput = fullRampDemand × 0.50
+    capacityRange: 0.50,             // trainedFraction=1 → maxThroughput = fullRampDemand × 1.00
+    baseEmployeesPerSection: {
+      grocery_section:     3,
+      electronics_section: 2,
+      cosmetics_section:   3,
+      hardware_section:    3,
+      clothing_section:    3,
+      pharmacy_section:    3,
+    } as Partial<Record<InvestmentType, number>>,
+    sizeEmployeeMultiplier: { small: 1.0, medium: 1.5, large: 2.0 } as Record<"small"|"medium"|"large", number>,
+    wagePerEmployeePerTurn: 150,
+  },
+
+  // ----------------------------------------------------------
   // Marketing
   // ----------------------------------------------------------
   marketing: {
@@ -534,9 +575,9 @@ export const GameConfig = {
     perCapitaDemand: {
       chicken: 0.0025,
       chicken_soup: 0.0015,
-      laptop_branded: 0.00015,
+      laptop_branded: 0.0003,
       ice_cream_strawberry: 0.004,
-      printer_branded: 0.00008,
+      printer_branded: 0.0004,
     } as Partial<Record<ProductId, number>>,
   },
 
@@ -560,12 +601,41 @@ export const GameConfig = {
   },
 
   // ----------------------------------------------------------
-  // City wealth dynamics
+  // City wealth dynamics (static parameters used by retail engine)
   // ----------------------------------------------------------
   cities: {
-    wealthNoiseStdDev: 0.005,
     wealthMin: 0.1,
     wealthMax: 0.9,
+    /** Scales how much city wealthIndex reduces elasticity. Formula: 1 - (wealthIndex - 0.5) × factor. */
+    wealthElasticityFactor: 0.3,
+  },
+
+  // ----------------------------------------------------------
+  // City life system — population and wealth dynamics
+  // ----------------------------------------------------------
+  cityLife: {
+    timeScale:           1.0,     // 1.0 = quarterly (reference speed); 1/3 = monthly, 4.0 = annual
+    naturalDecayRate:    0.003,
+    baseGrowthRateMean:  0.008,
+    baseGrowthRateStd:   0.003,
+    baseGrowthRateMin:   0.002,
+    baseGrowthRateMax:   0.015,
+    baseWealthRateMean: -0.000450,
+    baseWealthRateStd:   0.000300,
+    baseWealthRateMin:  -0.0006,
+    baseWealthRateMax:   0.0004,
+    wealthNoiseStd:      0.0008,
+    populationNoiseStd:  0.008,
+    networkBase:         0.5,
+    networkScale:        0.3,
+    networkMaxDistance:  500,
+    networkMin:          0.3,
+    networkMax:          2.0,
+    // Population-density component: nearby large cities reduce remoteness
+    // even without a direct road. Radius is in canvas px (canvas-size dependent).
+    networkPopRadiusPx:  300,   // ~98km at default SCALE_FACTOR (2000×1400 canvas)
+    networkPopNorm:      200_000, // reference population: 200k city = 1.0 unit
+    networkPopScale:     0.05,  // contribution per pop-unit at zero distance
   },
 
   // ----------------------------------------------------------
@@ -579,3 +649,60 @@ export const GameConfig = {
 } as const;
 
 export type GameConfigType = typeof GameConfig;
+
+// ============================================================
+// Default map configuration — passed to buildCityNodes / buildMapLinks.
+// All procedural parameters live here; future UI exposes these fields.
+// ============================================================
+export const defaultMapConfig: MapConfig = {
+  nodeCount:          50,
+  portCount:           3,
+  mapType:         "trading",
+  connectivity:     "normal",
+  minimumDegree:         1,
+  infrastructure:  "developed",
+  difficulty:       "medium",
+  canvasWidth:       2000,
+  canvasHeight:      1400,
+  portEdgeMargin:     120,
+  highwayMaxDistance: 300,
+};
+
+// --- Named map presets ---
+// Combine these with spread syntax to override individual fields.
+
+/** Dense road network, advanced highways — feels like Western Europe / the Netherlands. */
+export const europeanMapConfig: MapConfig = {
+  ...defaultMapConfig,
+  connectivity:    "dense",
+  minimumDegree:       2,
+  infrastructure:  "advanced",
+  difficulty:      "easy",
+};
+
+/** Sparse roads, no highways — colonial or wild-west frontier territory. */
+export const frontierMapConfig: MapConfig = {
+  ...defaultMapConfig,
+  mapType:        "frontier",
+  connectivity:   "isolated",
+  minimumDegree:       0,
+  infrastructure: "undeveloped",
+  difficulty:     "hard",
+};
+
+/** Moderate road network, basic highway spine — models a developing nation. */
+export const developingMapConfig: MapConfig = {
+  ...defaultMapConfig,
+  connectivity:   "sparse",
+  minimumDegree:       1,
+  infrastructure: "basic",
+};
+
+/** Normal connectivity, developed highway network, industrial zone bias. */
+export const industrialMapConfig: MapConfig = {
+  ...defaultMapConfig,
+  mapType:        "industrial",
+  connectivity:   "normal",
+  minimumDegree:       1,
+  infrastructure: "developed",
+};

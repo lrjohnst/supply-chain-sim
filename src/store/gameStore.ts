@@ -11,13 +11,14 @@ import {
   cancelPendingRecipeChange as engineCancelPending,
   markSectionIntentionallyIdle as engineMarkSectionIdle,
 } from "../engine/investments";
-import { takeLoan, computeTotalAssets } from "../engine/loans";
+import { drawCredit, repayCredit, computeTotalAssets, getCreditLimit, getCreditFacility } from "../engine/loans";
 import { createContract, executeBreachDeclaration, resetBreachCounters } from "../engine/contracts";
 import { generateId } from "../engine/utils";
 import { submitTenderBid, withdrawTenderBid as engineWithdrawTenderBid } from "../engine/tenders";
 import type { InvestmentType, Contract, RecipeKey, ProductId } from "../types";
 import type { AppNotification, GateAction } from "./notificationTypes";
 import { GameConfig } from "../config/gameConfig";
+import type { MapConfig } from "../types";
 
 export type Screen = "map" | "tenders" | "contracts" | "books" | "finance" | "products" | "settings";
 
@@ -29,6 +30,8 @@ interface GameStore {
   gameState: GameState | null;
   selectedNodeId: string | null;
   selectedFirmId: string | null;
+  selectedStoreFirmId: string | null;
+  selectedCityScreenId: string | null;
   activeScreen: Screen;
   lastTickResult: TickResult | null;
   lastBooks: CorporateBooks | null;
@@ -41,15 +44,20 @@ interface GameStore {
   gateQueue: GateAction[];
 
   // Actions — game lifecycle
-  startNewGame: (playerName: string) => void;
+  startNewGame: (playerName: string, mapConfig?: MapConfig) => void;
   endTurn: () => void;
 
   // Actions — selection / navigation
   selectNode: (nodeId: string | null) => void;
   selectFirm: (firmId: string | null) => void;
+  openStoreFirm: (firmId: string) => void;
+  closeStoreFirm: () => void;
+  openCityScreen: (cityId: string) => void;
+  closeCityScreen: () => void;
   setScreen: (screen: Screen) => void;
 
   // Actions — firm management
+  buildFirm: (cityNodeId: string, type: "farm" | "factory" | "store", name: string, locationId?: string) => string | null;
   buildInvestment: (firmId: string, type: InvestmentType) => string | null;
   cancelInvestment: (firmId: string, investmentId: string) => string | null;
   configureProductionLine: (firmId: string, investmentId: string, recipe: RecipeKey) => string | null;
@@ -57,12 +65,14 @@ interface GameStore {
   markLineIntentionallyIdle: (firmId: string, investmentId: string) => string | null;
   markSectionIntentionallyIdle: (firmId: string, investmentId: string) => string | null;
   toggleHarborAutoSource: (firmId: string, productId: ProductId, enabled: boolean) => void;
-  buildFirm: (cityNodeId: string, type: "farm" | "factory" | "store", name: string) => string | null;
   setRetailPrice: (firmId: string, product: ProductId, price: number) => void;
+  stopSelling: (firmId: string, productId: ProductId) => void;
   setSellToCompetitors: (firmId: string, enabled: boolean) => void;
+  renameFirm: (firmId: string, newName: string) => void;
 
   // Actions — finance
-  requestLoan: (principal: number, durationTurns: number) => string | null;
+  drawCredit: (amount: number) => string | null;
+  repayCredit: (amount: number) => string | null;
   addContract: (contract: Omit<Contract, "id" | "turnsExecuted" | "cumulativeVolumeShortfall" | "consecutiveQualityFailureTurns">) => string | null;
   bidOnTender: (tenderId: string, firmId: string, volume: number, price: number) => string | null;
   withdrawTenderBid: (tenderId: string, corporationId: string) => string | null;
@@ -84,6 +94,10 @@ interface GameStore {
 
   // Win screen visibility
   showWinScreen: boolean;
+
+  // Map pan/zoom — persisted across city screen open/close
+  mapTransform: { x: number; y: number; scale: number };
+  setMapTransform: (t: { x: number; y: number; scale: number } | ((prev: { x: number; y: number; scale: number }) => { x: number; y: number; scale: number })) => void;
 }
 
 const FIRM_BUILD_COST: Record<"farm" | "factory" | "store", number> = {
@@ -96,25 +110,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
   gameState: null,
   selectedNodeId: null,
   selectedFirmId: null,
+  selectedStoreFirmId: null,
+  selectedCityScreenId: null,
   activeScreen: "map",
   lastTickResult: null,
   lastBooks: null,
   notifications: [],
   notificationPanelOpen: false,
   gateQueue: [],
+  mapTransform: { x: 0, y: 0, scale: 1 },
+  setMapTransform: (t) => set((s) => ({
+    mapTransform: typeof t === "function" ? t(s.mapTransform) : t,
+  })),
   showWinScreen: false,
 
   // ------------------------------------------------------------------
   // Game lifecycle
   // ------------------------------------------------------------------
 
-  startNewGame: (playerName) => {
-    const state = newGame(playerName);
+  startNewGame: (playerName, mapConfig) => {
+    const state = newGame(playerName, mapConfig);
     const playerCorpId = Object.values(state.corporations).find((c) => c.isPlayer)!.id;
     set({
       gameState: state,
       selectedNodeId: null,
       selectedFirmId: null,
+      selectedStoreFirmId: null,
+      selectedCityScreenId: null,
       lastTickResult: null,
       lastBooks: computeCorporateBooks(state, playerCorpId, 0),
       notifications: [],
@@ -386,6 +408,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   selectNode: (nodeId) => set({ selectedNodeId: nodeId, selectedFirmId: null }),
   selectFirm: (firmId) => set({ selectedFirmId: firmId }),
+  openStoreFirm: (firmId) => set({ selectedStoreFirmId: firmId, selectedFirmId: null }),
+  closeStoreFirm: () => set({ selectedStoreFirmId: null }),
+  openCityScreen: (cityId) => set({ selectedCityScreenId: cityId, selectedNodeId: cityId, selectedFirmId: null }),
+  closeCityScreen: () => set({ selectedCityScreenId: null }),
   setScreen: (screen) => set({ activeScreen: screen }),
 
   // ------------------------------------------------------------------
@@ -449,24 +475,43 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ gameState: { ...gameState } });
   },
 
-  buildFirm: (cityNodeId, type, name) => {
+  buildFirm: (cityNodeId, type, name, locationId) => {
     const { gameState } = get();
     if (!gameState) return "No active game.";
     const playerCorp = Object.values(gameState.corporations).find((c) => c.isPlayer);
     if (!playerCorp) return "No player corporation.";
     const city = gameState.cityNodes[cityNodeId];
     if (!city) return "City not found.";
-    if (city.firmSlots === 0) return "Cannot build firms at this location.";
-    const firmsInCity = Object.values(gameState.firms).filter(
-      (f) => f.cityNodeId === cityNodeId && f.corporationId === playerCorp.id
-    ).length;
-    if (firmsInCity >= city.firmSlots) return "No firm slots remaining in this city.";
-    const cost = FIRM_BUILD_COST[type];
-    if (playerCorp.cash < cost) return `Insufficient funds. Required: €${cost.toLocaleString()}.`;
-    const id = generateId();
-    gameState.firms[id] = makeFirm(id, playerCorp.id, cityNodeId, type, name);
-    playerCorp.firmIds.push(id);
-    playerCorp.cash -= cost;
+
+    let cost: number;
+
+    if (type === "store") {
+      if (!locationId) return "A store location must be selected.";
+      const loc = city.storeLocations.find((l) => l.id === locationId && l.occupiedByFirmId === null);
+      if (!loc) return "That store location is not available.";
+      cost = GameConfig.storeSlots.locationClassCost[loc.locationClass] + GameConfig.storeSlots.buildCostBySize[loc.size];
+      if (playerCorp.cash < cost) return `Insufficient funds. Required: €${cost.toLocaleString()}.`;
+      const id = generateId();
+      gameState.firms[id] = makeFirm(id, playerCorp.id, cityNodeId, type, name,
+        playerCorp.corporateTrainingIntensity, loc.locationClass, loc.size);
+      playerCorp.firmIds.push(id);
+      playerCorp.cash -= cost;
+      loc.occupiedByFirmId = id;
+    } else {
+      if (city.factorySlots === 0) return "Cannot build production firms at this location.";
+      const nonStoreFirmsInCity = Object.values(gameState.firms).filter(
+        (f) => f.cityNodeId === cityNodeId && f.type !== "store"
+      ).length;
+      if (nonStoreFirmsInCity >= city.factorySlots) return "No production slots remaining in this city.";
+      cost = FIRM_BUILD_COST[type];
+      if (playerCorp.cash < cost) return `Insufficient funds. Required: €${cost.toLocaleString()}.`;
+      const id = generateId();
+      gameState.firms[id] = makeFirm(id, playerCorp.id, cityNodeId, type, name,
+        playerCorp.corporateTrainingIntensity);
+      playerCorp.firmIds.push(id);
+      playerCorp.cash -= cost;
+    }
+
     set({ gameState: { ...gameState } });
     return null;
   },
@@ -475,7 +520,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { gameState } = get();
     if (!gameState) return;
     const firm = gameState.firms[firmId];
-    if (firm) { firm.retailPrices[product] = price; set({ gameState: { ...gameState } }); }
+    if (!firm) return;
+    const isNew = firm.retailPrices[product] === undefined;
+    firm.retailPrices[product] = price;
+    if (isNew) firm.salesRampProgress[product] = 0;
+    set({ gameState: { ...gameState } });
+  },
+
+  stopSelling: (firmId, productId) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const firm = gameState.firms[firmId];
+    if (!firm) return;
+    firm.harborAutoSource[productId] = false;
+    delete firm.retailPrices[productId];
+    delete firm.salesRampProgress[productId];
+    set({ gameState: { ...gameState } });
   },
 
   setSellToCompetitors: (firmId, enabled) => {
@@ -485,15 +545,31 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (firm) { firm.sellToCompetitors = enabled; set({ gameState: { ...gameState } }); }
   },
 
+  renameFirm: (firmId, newName) => {
+    const { gameState } = get();
+    if (!gameState) return;
+    const firm = gameState.firms[firmId];
+    if (firm) { firm.name = newName; set({ gameState: { ...gameState } }); }
+  },
+
   // ------------------------------------------------------------------
   // Finance
   // ------------------------------------------------------------------
 
-  requestLoan: (principal, durationTurns) => {
+  drawCredit: (amount) => {
     const { gameState } = get();
     if (!gameState) return "No active game.";
     const playerCorpId = Object.values(gameState.corporations).find((c) => c.isPlayer)!.id;
-    const err = takeLoan(gameState, playerCorpId, principal, durationTurns);
+    const err = drawCredit(gameState, playerCorpId, amount);
+    if (!err) set({ gameState: { ...gameState } });
+    return err;
+  },
+
+  repayCredit: (amount) => {
+    const { gameState } = get();
+    if (!gameState) return "No active game.";
+    const playerCorpId = Object.values(gameState.corporations).find((c) => c.isPlayer)!.id;
+    const err = repayCredit(gameState, playerCorpId, amount);
     if (!err) set({ gameState: { ...gameState } });
     return err;
   },
@@ -602,7 +678,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   // ------------------------------------------------------------------
 
   endGame: () => {
-    set({ gameState: null, notifications: [], gateQueue: [], showWinScreen: false });
+    set({ gameState: null, notifications: [], gateQueue: [], showWinScreen: false,
+      selectedNodeId: null, selectedFirmId: null, selectedStoreFirmId: null, selectedCityScreenId: null });
   },
 
   dismissWinScreen: () => {

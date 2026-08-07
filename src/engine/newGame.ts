@@ -1,11 +1,11 @@
-import type { GameState, HarborNode, Corporation, Firm } from "../types";
-import { GameConfig } from "../config/gameConfig";
+import type { GameState, HarborNode, Corporation, Firm, MapConfig } from "../types";
+import { GameConfig, defaultMapConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
 import { getBasePrice, getHarborSoldProducts } from "./harbor";
 import { buildCityNodes, buildMapLinks } from "./map";
 
 /** Create a fresh game state. */
-export function newGame(playerName: string): GameState {
+export function newGame(playerName: string, mapConfig: MapConfig = defaultMapConfig): GameState {
   const harborNode: HarborNode = {
     id: "harbor",
     name: "International Harbor",
@@ -16,11 +16,16 @@ export function newGame(playerName: string): GameState {
     ) as HarborNode["prices"],
   };
 
-  const cityNodes = buildCityNodes();
-  const mapLinks = buildMapLinks(cityNodes);
+  const mapSeed = Math.floor(Math.random() * 2 ** 32);
+  const cityNodes = buildCityNodes(mapSeed, mapConfig);
+  const mapLinks = buildMapLinks(cityNodes, mapSeed, mapConfig);
 
   const playerCorpId = generateId();
   const aiCorpId = generateId();
+
+  // Stable credit facility IDs (one per corporation, exists from turn 0 at zero balance)
+  const playerCreditId = `credit-${playerCorpId}`;
+  const aiCreditId     = `credit-${aiCorpId}`;
 
   const playerCorp: Corporation = {
     id: playerCorpId,
@@ -28,7 +33,7 @@ export function newGame(playerName: string): GameState {
     isPlayer: true,
     cash: GameConfig.player.startingCash,
     firmIds: [],
-    loanIds: [],
+    loanIds: [playerCreditId],
     cumulativeRevenue: 0,
     corporateTrainingIntensity: GameConfig.training.defaultCorporateIntensity,
     marketingBudgetPerTurn: 0,
@@ -42,13 +47,15 @@ export function newGame(playerName: string): GameState {
     isPlayer: false,
     cash: GameConfig.ai.startingCash,
     firmIds: [],
-    loanIds: [],
+    loanIds: [aiCreditId],
     cumulativeRevenue: 0,
     corporateTrainingIntensity: GameConfig.training.defaultCorporateIntensity,
     marketingBudgetPerTurn: 0,
     multiYearContractsUnlocked: false,
     eliminated: false,
   };
+
+  const baseRate = GameConfig.loans.baseAnnualInterestRate;
 
   const state: GameState = {
     turn: 0,
@@ -63,7 +70,10 @@ export function newGame(playerName: string): GameState {
     firms: {},
     contracts: {},
     tenders: {},
-    loans: {},
+    loans: {
+      [playerCreditId]: { id: playerCreditId, corporationId: playerCorpId, principal: 0, outstandingBalance: 0, annualInterestRate: baseRate },
+      [aiCreditId]:     { id: aiCreditId,     corporationId: aiCorpId,     principal: 0, outstandingBalance: 0, annualInterestRate: baseRate },
+    },
     transactions: [],
     pendingEvents: [],
     eventHistory: [],
@@ -89,13 +99,22 @@ export function newGame(playerName: string): GameState {
 
 function seedAI(state: GameState, aiCorpId: string): void {
   const aiCorp = state.corporations[aiCorpId];
-  const cityId = GameConfig.ai.startingCityId;
-  const city = state.cityNodes[cityId];
-  if (!city || city.firmSlots === 0) return;
+  // Pick the largest non-port city (highest population) as the AI starting city.
+  const city = Object.values(state.cityNodes)
+    .filter((n) => n.type !== "port")
+    .sort((a, b) => b.population - a.population)[0];
+  if (!city) return;
+
+  // AI starts with a medium B-class store; find a free B-medium location
+  const freeLoc = city.storeLocations.find(
+    (l) => l.locationClass === "B" && l.size === "medium" && l.occupiedByFirmId === null
+  );
+  if (!freeLoc) return;
 
   const firmId = generateId();
-  state.firms[firmId] = makeFirm(firmId, aiCorpId, cityId, "store", `${aiCorp.name} Store`);
+  state.firms[firmId] = makeFirm(firmId, aiCorpId, city.id, "store", `${aiCorp.name} Store`, undefined, "B", "medium");
   aiCorp.firmIds.push(firmId);
+  freeLoc.occupiedByFirmId = firmId;
 }
 
 // ------------------------------------------------------------------
@@ -109,9 +128,12 @@ export function makeFirm(
   type: "farm" | "factory" | "store",
   name: string,
   trainingIntensity = GameConfig.training.defaultCorporateIntensity,
+  locationClass: "A" | "B" | "C" = "B",
+  size: "small" | "medium" | "large" = "medium",
 ): Firm {
   return {
     id, corporationId, cityNodeId, type, name,
+    locationClass, size,
     investments: [],
     productionLines: [],
     inventory: [],
@@ -122,5 +144,9 @@ export function makeFirm(
     harborAutoSource: {},
     trainingIntensity,
     trainingIntensityOverridden: false,
+    trainedFraction: 0,
+    employeeCount: 1,
+    utilizationPerSlot: {},
+    capacityLimitedSlot: {},
   };
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useGameStore, type Screen } from "./store/gameStore";
 import { corporationNetWorth } from "./engine/utils";
 import NodeMap from "./components/map/NodeMap";
@@ -10,6 +10,9 @@ import BooksScreen from "./components/screens/BooksScreen";
 import FinanceScreen from "./components/screens/FinanceScreen";
 import ProductsScreen from "./components/screens/ProductsScreen";
 import SettingsScreen from "./components/screens/SettingsScreen";
+import StoreFirmOverview from "./components/screens/StoreFirmOverview";
+import CityScreen from "./components/screens/CityScreen";
+import StartScreen from "./components/screens/StartScreen";
 import GatePrompt from "./components/notifications/GatePrompt";
 import { NotificationBell, NotificationPanel } from "./components/notifications/NotificationPanel";
 import DebugPanel from "./components/debug/DebugPanel";
@@ -17,8 +20,9 @@ import { startMusic, stopMusic, updateParams } from "./audio/musicEngine";
 import { loadMusicSettings } from "./audio/musicSettings";
 
 export default function App() {
-  const { gameState, activeScreen, setScreen, startNewGame, showWinScreen } = useGameStore();
-  const [playerName, setPlayerName] = useState("");
+  const { gameState, activeScreen, setScreen, startNewGame, showWinScreen,
+    selectedStoreFirmId, closeStoreFirm,
+    selectedCityScreenId, closeCityScreen } = useGameStore();
   // Singleton guard — prevents double-init in React strict mode
   const musicStarted = useRef(false);
 
@@ -33,7 +37,7 @@ export default function App() {
   }, []);
 
   if (!gameState) {
-    return <StartScreen playerName={playerName} setPlayerName={setPlayerName} onStart={startNewGame} />;
+    return <StartScreen onStart={startNewGame} />;
   }
 
   if (gameState.phase === "lost") {
@@ -85,14 +89,25 @@ export default function App() {
 
       {/* Main content */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {activeScreen === "map" && (
+        {activeScreen === "map" && selectedStoreFirmId ? (
+          <StoreFirmOverview firmId={selectedStoreFirmId} onBack={closeStoreFirm} />
+        ) : activeScreen === "map" && selectedCityScreenId ? (
+          <>
+            <div style={{ flex: 1, overflow: "hidden" }}>
+              <CityScreen cityId={selectedCityScreenId} onBack={closeCityScreen} />
+            </div>
+            <div style={{ width: 280, borderLeft: "1px solid var(--border)", flexShrink: 0, overflow: "hidden" }}>
+              <RightPanel />
+            </div>
+          </>
+        ) : activeScreen === "map" ? (
           <>
             <div style={{ flex: 1, overflow: "hidden" }}><NodeMap /></div>
             <div style={{ width: 280, borderLeft: "1px solid var(--border)", flexShrink: 0, overflow: "hidden" }}>
               <RightPanel />
             </div>
           </>
-        )}
+        ) : null}
         {activeScreen === "tenders" && <TenderBoard />}
         {activeScreen === "contracts" && <ContractsScreen />}
         {activeScreen === "books" && <BooksScreen />}
@@ -124,48 +139,6 @@ function NavTab({ label, active, onClick }: { label: string; active: boolean; on
 const NAV_LABELS: Record<string, string> = {
   map: "Map", tenders: "Tenders", contracts: "Contracts", books: "Books", finance: "Finance", products: "Products", settings: "⚙",
 };
-
-// ============================================================
-// Start screen
-// ============================================================
-
-function StartScreen({ playerName, setPlayerName, onStart }: {
-  playerName: string; setPlayerName: (v: string) => void; onStart: (name: string) => void;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg)" }}>
-      <div style={{ background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 12, padding: 40, width: 400, textAlign: "center" }}>
-        <div style={{ color: "var(--gold)", fontWeight: 700, fontSize: 18, letterSpacing: "0.04em", fontFamily: "monospace", marginBottom: 8 }}>
-          Lucas Johnston's Supply Chain Sim
-        </div>
-        <div style={{ color: "var(--text-dim)", fontSize: 12, marginBottom: 32 }}>
-          Build a supply chain empire. Start small. Grow fast. Don't go bankrupt.
-        </div>
-        <div style={{ textAlign: "left", marginBottom: 16 }}>
-          <label style={{ display: "block", fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>
-            Corporation name
-          </label>
-          <input
-            style={{ width: "100%", boxSizing: "border-box" }}
-            placeholder="Enter corporation name"
-            value={playerName}
-            onChange={(e) => setPlayerName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && playerName.trim() && onStart(playerName.trim())}
-            autoFocus
-          />
-        </div>
-        <button className="primary" style={{ width: "100%", padding: "10px 0", fontSize: 14 }}
-          disabled={!playerName.trim()} onClick={() => onStart(playerName.trim())}>
-          Start Game
-        </button>
-        <div style={{ marginTop: 24, fontSize: 11, color: "var(--text-dim)", lineHeight: 1.8 }}>
-          Starting year: 1980 · €100,000 capital · 200 turns · one AI rival
-          <br />Win condition: €5M net worth
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ============================================================
 // Win screen

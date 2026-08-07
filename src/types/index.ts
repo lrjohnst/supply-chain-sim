@@ -67,7 +67,50 @@ export interface EconomicSnapshot {
 /** "mine" is a post-MVP firm type included now so product registry handlingFirms stay correct. */
 export type FirmType = "farm" | "factory" | "store" | "mine";
 
-export type NodeType = "city" | "town" | "harbor";
+export type NodeType = "city" | "harbor" | "port" | "airport";
+
+// ============================================================
+// Map configuration (player-configurable in a future UI)
+// ============================================================
+
+export interface MapConfig {
+  // --- Scale ---
+  nodeCount:        number;   // "Map size" — total nodes
+  portCount:        number;   // "Number of ports"
+  // --- Map type ---
+  // "trading"    more coastal zones, denser connections
+  // "industrial" more inland industrial zones, fewer ports
+  // "frontier"   more rural, sparse connections, larger distances
+  mapType: "trading" | "industrial" | "frontier";
+  // --- Connectivity ---
+  // "isolated"  very few connections, dead-ends common (frontier/colonial feel)
+  // "sparse"    average degree 2–3
+  // "normal"    average degree 3–4 (balanced default)
+  // "dense"     average degree 4–6, few dead-ends (Western European feel)
+  // Controls intra-zone AND cross-zone link thresholds independently.
+  connectivity: "isolated" | "sparse" | "normal" | "dense";
+  // Hard floor on organic road connections per node.
+  // 0 = BFS fallback only (some dead-ends), 2 = NL-style (every node has ≥ 2 roads)
+  minimumDegree: number;
+  // --- Infrastructure ---
+  // "undeveloped"  no highways — all links are roads
+  // "basic"        highways between top ~8% of cities by population
+  // "developed"    highways connecting cities ≥ 80k population (default)
+  // "advanced"     highways connecting cities ≥ 40k, wider MST reach
+  infrastructure: "undeveloped" | "basic" | "developed" | "advanced";
+  // --- Difficulty ---
+  // Easy:   more metropolitan zones, more connections
+  // Medium: balanced (reference)
+  // Hard:   more rural zones, fewer connections
+  difficulty: "easy" | "medium" | "hard";
+  // --- Canvas ---
+  canvasWidth:  number;   // screen coordinate space width
+  canvasHeight: number;   // screen coordinate space height
+  // --- Port placement ---
+  portEdgeMargin: number;   // "Coastal proximity" — ports within this many px of canvas edge
+  // --- Highway network ---
+  highwayMaxDistance: number;  // Max Euclidean px between nodes to be joined by MST highway edge
+}
 
 export type ContractPartyType = "corporation" | "harbor" | "market";
 
@@ -82,23 +125,58 @@ export interface MapLink {
   baseCost: number;       // € per unit transported per link
   capacity: number;       // max units per turn
   investmentLevel: number;
+  distance: number;       // km between the two nodes
+  linkType: "highway" | "road";
+}
+
+export interface StoreLocation {
+  id: EntityId;
+  locationClass: "A" | "B" | "C";
+  size: "small" | "medium" | "large";
+  /** Firm ID that occupies this location, or null if free. */
+  occupiedByFirmId: EntityId | null;
 }
 
 export interface CityNode {
   id: EntityId;
   name: string;
   type: NodeType;
+  /** Current population. Updated each turn by tickPopulation(). */
   population: number;
-  firmSlots: number;
+  /** Slots for production firms (factories, farms, mines). Stores use storeSlots instead. */
+  factorySlots: number;
   energyCostMultiplier: number;
-  hasHarborAccess: boolean;
+  /**
+   * Harbor access flag — derived at runtime from node type and map topology;
+   * stored here for convenience. True when type === "port" or when directly
+   * connected to a port/harbor node. Do not set manually; use isHarborAccessible().
+   * @deprecated Prefer checking node.type === "port" or isHarborAccessible() directly.
+   */
+  harborAccess: boolean;
   position: { x: number; y: number };
-  /** Purchasing power index (0–1). Wealthier cities buy more consumer goods. */
+  /** Purchasing power index (0–1). Updated each turn by tickWealth(). */
   wealthIndex: number;
   /** Firm type presence history. Post-MVP: drives cluster bonuses. */
   industrialIdentity: Partial<Record<string, number>>;
-  /** Per-city demand multiplier. Starts at 1.0, drifts via tickCities. */
+  /** Per-city demand multiplier. Static tuning knob set at construction. */
   demandModifier: number;
+  /**
+   * Atomic store locations available in this city. Each entry is a fixed class+size combination
+   * that a store firm can occupy. city.ts may append new entries as the city grows.
+   */
+  storeLocations: StoreLocation[];
+  // --- City life system (static, set at construction) ---
+  /** Hard upper bound on population. Derived from starting population and a random territory factor. */
+  geoCeiling: number;
+  /** Logistic growth rate per turn. Drawn from normal distribution at construction. */
+  baseGrowthRate: number;
+  /** Per-turn wealth drift. Can be negative. Drawn from normal distribution at construction. */
+  baseWealthRate: number;
+  // --- Full-game history (unbounded, one entry per completed turn) ---
+  /** Population recorded at the end of each completed turn. Index = turn number. */
+  populationHistory: number[];
+  /** wealthIndex recorded at the end of each completed turn. Index = turn number. */
+  wealthHistory: number[];
 }
 
 export interface HarborNode {
@@ -131,7 +209,7 @@ export type InvestmentType =
   | "branding_facility"
   | "training_factory"
   | "barcode_scanning"
-  // Store
+  // Store — base sections
   | "grocery_section"
   | "cosmetics_section"
   | "hardware_section"
@@ -139,7 +217,10 @@ export type InvestmentType =
   | "clothing_section"
   | "pharmacy_section"
   | "warehouse_capacity"
-  | "training_store";
+  | "training_store"
+  // Store — section expansions (add one extra product slot per investment)
+  | "grocery_section_expansion"
+  | "electronics_section_expansion";
 
 /** Investment build lifecycle. Startup phase is tracked on ProductionLineSetup, not here. */
 export type InvestmentStatus = "queued" | "in_progress" | "complete";
@@ -228,11 +309,13 @@ export type TransactionCategory =
   | "operating_cost"
   | "loan_interest"
   | "loan_repayment"
+  | "loan_draw"
   | "investment_cost"
   | "training_cost"
   | "marketing_cost"
   | "transport_cost"
-  | "fine_payment";
+  | "fine_payment"
+  | "staff_cost";
 
 export interface Transaction {
   id: EntityId;
@@ -255,12 +338,11 @@ export interface Transaction {
 export interface Loan {
   id: EntityId;
   corporationId: EntityId;
+  /** Cumulative amount ever drawn from this facility (historical record). */
   principal: number;
   outstandingBalance: number;
+  /** Tracks the current base rate; updated each turn from state.currentBaseInterestRate. */
   annualInterestRate: number;
-  quarterlyPayment: number;
-  turnTaken: number;
-  durationTurns: number;
 }
 
 // ============================================================
@@ -375,6 +457,10 @@ export interface Firm {
   cityNodeId: EntityId;
   type: FirmType;
   name: string;
+  /** locationClass is only meaningful for stores. It models consumer footfall and market reach (demand multiplier, elasticity scaling). Non-store firms default to "B" with no mechanical effect. Future firm types (factory, farm, mine) will use different location models. */
+  locationClass: "A" | "B" | "C";
+  /** size drives investment slots for stores, factories, and farms. Mine capacity model is deferred — mine capacity is determined by geological deposit, not a size choice at construction. Non-store firms default to "medium". */
+  size: "small" | "medium" | "large";
   investments: Investment[];
   // Production line configs — one entry per completed production_line investment
   productionLines: ProductionLineSetup[];
@@ -399,6 +485,31 @@ export interface Firm {
   trainingIntensity: number;
   /** True when the player has individually overridden this firm's training intensity. */
   trainingIntensityOverridden: boolean;
+  /**
+   * Actual trained fraction of staff (0.0–1.0). Starts at 0.0 on a new firm.
+   * Distinct from trainingIntensity: this only moves via updateTrainedFraction()
+   * in the engine tick, never directly from the training slider. Drives the
+   * staff ball display and the retail capacity multiplier. Store firms only.
+   */
+  trainedFraction: number;
+  /**
+   * Employee headcount, recalculated each turn from completed section
+   * investments and store size. Store firms only; minimum 1.
+   */
+  employeeCount: number;
+  /**
+   * Per-product utilization this turn (0.0–1.0+), relative to an equal
+   * fair share of the section's total capacity. Store firms only.
+   */
+  utilizationPerSlot: Partial<Record<ProductId, number>>;
+  /**
+   * True if this product's sales were actually truncated below demand
+   * because the section's capacity pool ran out this turn. Distinct from
+   * utilizationPerSlot crossing 100% — this is the accurate "at capacity"
+   * signal (utilizationPerSlot measures fair-share load, which can exceed
+   * 100% without the pool itself being exhausted). Store firms only.
+   */
+  capacityLimitedSlot: Partial<Record<ProductId, boolean>>;
 }
 
 // ============================================================
@@ -489,6 +600,7 @@ export interface FirmBooks {
   inputCosts: number;
   overheadCosts: number;
   operatingCosts: number;
+  staffWageCosts: number;
   capitalExpenditure: number;
   netProfit: number;
   lines: Transaction[];
@@ -501,6 +613,7 @@ export interface CorporateBooks {
   inputCosts: number;
   overheadCosts: number;
   operatingCosts: number;
+  staffWageCosts: number;
   capitalExpenditure: number;
   loanInterest: number;
   netProfit: number;
