@@ -6,23 +6,9 @@ Read this first when picking up work. [known-gaps.md](known-gaps.md) describes t
 
 ---
 
-## ⚠ Unpushed — do this first
+## Remote
 
-**Remote:** `https://github.com/lrjohnst/supply-chain-sim`
-
-It is already configured locally as `origin`, and the GitHub repo is empty, so the
-first push is a clean fast-forward. **Nothing has been pushed yet** — the push
-failed on credentials because the Claude Code session has no interactive terminal
-for the GitHub auth prompt (`fatal: could not read Username for 'https://github.com'`).
-
-Run this from a normal terminal, where the credential dialog can appear:
-
-```bash
-git push -u origin main
-```
-
-Everything is committed and the working tree is clean, so this is the only step
-outstanding. Until it runs, the entire project exists **only on this machine**.
+`https://github.com/lrjohnst/supply-chain-sim` — configured locally as `origin`, not yet pushed.
 
 ---
 
@@ -84,8 +70,7 @@ Two contributing factors were identified:
 
 ## Suggested next steps
 
-1. **Push to the remote** — see the top of this file; nothing is backed up until then.
-2. **Answer the grid question** — readability or feel. Decides Option B vs C.
-3. If proceeding: add terrain assignment to `buildCityNodes` and a tile layer to `NodeMap`, keeping the link topology untouched.
-4. Remove `[MAP-VERIFY]` logs once generation stabilises.
-5. Refresh [known-gaps.md](known-gaps.md), which still describes MVP 1.0.
+1. **Answer the grid question** — readability or feel. Decides Option B vs C.
+2. If proceeding: add terrain assignment to `buildCityNodes` and a tile layer to `NodeMap`, keeping the link topology untouched.
+3. Remove `[MAP-VERIFY]` logs once generation stabilises.
+4. Refresh [known-gaps.md](known-gaps.md), which still describes MVP 1.0.
