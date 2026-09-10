@@ -56,7 +56,6 @@ export default function CityScreen({ cityId, onBack }: Props) {
 
   const nodeTypeLabel = city.type === "port" ? "Port City"
     : city.type === "harbor"  ? "Harbor"
-    : city.type === "town"    ? "Town"
     : city.type === "airport" ? "Airport"
     : "City";
 
@@ -124,7 +123,7 @@ export default function CityScreen({ cityId, onBack }: Props) {
               />
               <Tooltip
                 contentStyle={tooltipStyle}
-                formatter={(v: number) => [v.toLocaleString(), "Population"]}
+                formatter={(v) => [Number(v).toLocaleString(), "Population"]}
                 labelFormatter={(t) => `Turn ${t}`}
               />
               <Line
@@ -157,7 +156,7 @@ export default function CityScreen({ cityId, onBack }: Props) {
               />
               <Tooltip
                 contentStyle={tooltipStyle}
-                formatter={(v: number) => [v.toFixed(3), "Wealth Index"]}
+                formatter={(v) => [Number(v).toFixed(3), "Wealth Index"]}
                 labelFormatter={(t) => `Turn ${t}`}
               />
               <Line
