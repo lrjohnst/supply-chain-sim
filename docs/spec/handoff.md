@@ -6,9 +6,17 @@ Read this first when picking up work. [known-gaps.md](known-gaps.md) describes t
 
 ---
 
-## Remote
+## Remote and deployment
 
-`https://github.com/lrjohnst/supply-chain-sim` — configured locally as `origin`, not yet pushed.
+`https://github.com/lrjohnst/supply-chain-sim` — pushed 2026-09-10, `main` tracks `origin/main`.
+
+The game is live at **https://supply-chain-sim.lucasjohnston.nl**, served as a static Vite build
+behind Nginx on srv6. No backend — it is entirely client-side. See [../deployment.md](../deployment.md)
+for the rebuild procedure and why it runs `npx vite build` rather than `npm run build`.
+
+**Note:** `tsc -b` currently fails with 40 errors on `main`, so `npm run build` does not complete.
+`ReadmeClaude.md` asks for a clean typecheck before committing; that is not the case at `acf2df3`.
+Logged as item 1 in [../../BACKLOG.md](../../BACKLOG.md).
 
 ---
 

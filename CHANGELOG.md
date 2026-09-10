@@ -1,5 +1,20 @@
 # Changelog
 
+## Niet uitgebracht — deploy en projectdocumentatie (2026-09-10)
+
+Geen wijzigingen aan de game-code; alleen infrastructuur en documentatie.
+
+### Toegevoegd
+- Live gezet op https://supply-chain-sim.lucasjohnston.nl (srv6): statische Vite-build achter Nginx,
+  SPA-fallback naar `index.html`, Let's Encrypt-certificaat met auto-renewal
+- `docs/deployment.md` — waar het draait en hoe je herbouwt na een wijziging
+- `BACKLOG.md` — open app-items, conform de conventie dat elke app een eigen backlog heeft
+- Volledige historie gepusht naar `github.com/lrjohnst/supply-chain-sim` (remote was ingesteld maar leeg)
+
+### Opgemerkt
+- `tsc -b` faalt met 40 fouten op `main`, waardoor `npm run build` afbreekt. De deploy draait daarom
+  op `npx vite build`. Zie BACKLOG.md item 1 — dit is bestaand werk, niet door de deploy veroorzaakt.
+
 ## v1.1 — Engine hardening, breach mechanics, city/map architecture, spec v1.0
 
 ### Added
