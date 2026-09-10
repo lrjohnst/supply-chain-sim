@@ -8,6 +8,7 @@ This is the entry point for the SCS specification. Read the files relevant to th
 
 ## Top-level documents
 
+- **[handoff.md](handoff.md) — current state, what was last worked on, open design questions. Read this first.**
 - [design-principles.md](design-principles.md) — Nine core design principles that govern all gameplay decisions
 - [glossary.md](glossary.md) — Definitions of Corporation, Firm, Contract, Tender, Ramp, Chaos engine, and all key terms
 - [config-reference.md](config-reference.md) — Full GameConfig TypeScript block with all tunable numeric parameters

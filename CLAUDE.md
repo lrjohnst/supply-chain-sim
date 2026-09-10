@@ -4,10 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Specification
 
+**Start here:** [docs/spec/handoff.md](docs/spec/handoff.md) — current state, what was last worked on, open design questions. Read before picking up work.
+
 Read the relevant engine spec file before touching any engine module. Read [docs/spec/design-principles.md](docs/spec/design-principles.md) before any feature work or UI/UX decisions.
 
 | Spec file | Contents |
 |-----------|----------|
+| [handoff.md](docs/spec/handoff.md) | Current state, open threads, known traps — read first |
 | [design-principles.md](docs/spec/design-principles.md) | Nine core design principles that govern all gameplay decisions |
 | [glossary.md](docs/spec/glossary.md) | Definitions of Corporation, Firm, Contract, Tender, Ramp, Chaos engine, and all key terms |
 | [config-reference.md](docs/spec/config-reference.md) | Full GameConfig TypeScript block with all tunable numeric parameters |
@@ -72,6 +75,24 @@ React components read from useGameStore()
 - `src/config/gameConfig.ts` — **all numeric constants live here**. Never hardcode gameplay values in engine files.
 - `src/types/index.ts` — all shared types. `GameState` is the root.
 
+### Core classifications
+
+**Node types** (`NodeType` union: `"city" | "harbor" | "port" | "airport"`):
+- `city` — every procedurally generated land node. Has `factorySlots` for production firms and `storeLocations` (A/B/C classes) for retail stores.
+- `port` — a city promoted during generation: sits near a canvas edge, `harborAccess: true`, fixed A1/B2/C3 store layout, `"Port "` name prefix.
+- `harbor` — the standalone International Harbor node (no firms can be built here).
+- `airport` — declared but never generated; reserved for post-MVP logistics.
+
+> `"town"` was removed from `NodeType`. `factorySlots` was formerly `productionSlots`. Both renames are complete across engine, store, and UI — do not reintroduce the old names.
+
+`factorySlots` is derived from population alone (≥300k → 6, ≥150k → 4, ≥60k → 3, else 2). See [engine/map.md](docs/spec/engine/map.md).
+
+**Firm subtypes** (`FirmType` union: `"farm" | "factory" | "store" | "mine" | "logistics_facility"`):
+- Production firms (`farm`, `factory`, `mine`) consume `factorySlots` on a CityNode and use `GameConfig.firmInvestmentSlotLimit` (flat 8) for investments.
+- `store` — consumes `storeSlots` on a CityNode, keyed by `locationClass` (`"A" | "B" | "C"`) and `size` (`"small" | "medium" | "large"`). Investment slots are size-based (`GameConfig.storeSlots.investmentSlotsBySize`). Store sections (grocery, electronics, etc.) determine which products can be sold. Stores do **not** use the production-firm investment list. Store firms open `StoreFirmOverview` (full-screen) rather than the RightPanel FirmPanel.
+
+**Store slot accounting**: each store occupies `GameConfig.storeSlots.citySlotsBySize[size]` units (1/2/3) from the city's slot class bucket (`storeSlots.A`, `.B`, or `.C`). Slot availability is checked in `gameStore.buildFirm()`.
+
 ### Engine modules
 
 | File | Responsibility |
@@ -84,13 +105,32 @@ React components read from useGameStore()
 | `investments.ts` | Advance build turns, startup phase, paused-investment detection |
 | `production.ts` | Recipe execution per production line, seasonal multipliers |
 | `ai.ts` | AI decision loop: expand firms, bid tenders, manage supply |
-| `map.ts` | `buildCityNodes`, `buildMapLinks`, `getTransportCost` (Dijkstra) |
-| `city.ts` | `getCityDemandMultiplier`, `tickCities` (wealth drift) |
+| `map.ts` | Procedural map generation from seed + `MapConfig`; `getTransportCost` (Dijkstra) |
+| `city.ts` | `tickPopulation` (logistic growth), `tickWealth`, `computeNetworkFactor`, demand/elasticity helpers |
 | `bankruptcy.ts` | `requireCash` (throws `BankruptcyError` for player), `eliminateCorporation` (for AI) |
 | `books.ts` | P&L / balance sheet computation for the Books screen |
 | `operatingCosts.ts` | Deduct per-turn overhead; `getProductionLineQuality` |
 | `macroEvents.ts` | Recession, commodity shocks, interest rate events |
 | `harbor.ts` | Harbor price ticking with noise and active shocks |
+
+### Map generation
+
+The map is **procedurally generated**, never hardcoded. `newGame(playerName, mapConfig?)` draws a random seed and calls `buildCityNodes` then `buildMapLinks`. `MapConfig` (in `types/index.ts`, defaults + presets in `gameConfig.ts`) controls node count, ports, zone weights, road density (`connectivity`), guaranteed links per node (`minimumDegree`), and the highway network (`infrastructure`).
+
+Two constraints that are easy to break:
+- **`buildMapLinks` replays `buildCityNodes` Step 1** with the same seed to recover region centres and zone characters. Adding or removing an RNG draw in that step desynchronises the replay. `[MAP-VERIFY]` console logs exist to check this.
+- **`highwayMaxDistance` and `networkPopRadiusPx` are in canvas pixels, not km**, so both are coupled to `canvasWidth`/`canvasHeight`.
+
+All link distances are clamped to `[20, 100]` km regardless of screen geometry. Full detail in [engine/map.md](docs/spec/engine/map.md).
+
+### Screens
+
+`activeScreen` (Zustand) drives the nav tabs. Two screens render outside that switch:
+- `CityScreen` — opens via `selectedCityScreenId` when a map node is clicked. Population/wealth charts, city character badges.
+- `StoreFirmOverview` — opens via `selectedStoreFirmId`; store firms use this instead of the RightPanel FirmPanel.
+- `StartScreen` — rendered whenever `gameState` is null. Landing mode (name + Quick Game) and config mode (map presets + individual `MapConfig` controls).
+
+`NodeMap` unmounts when CityScreen opens, so pan/zoom lives in the store as `mapTransform`, not local state.
 
 ### Bankruptcy pattern
 

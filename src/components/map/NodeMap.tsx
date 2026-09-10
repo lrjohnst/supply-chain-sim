@@ -1,19 +1,26 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useCallback } from "react";
 import { useGameStore } from "../../store/gameStore";
-import type { CityNode, Firm } from "../../types";
+import type { Firm } from "../../types";
 
 const MAP_W = 1000;
 const MAP_H = 700;
-const NODE_R = 22;
 const FIRM_R = 8;
-const FIRM_ORBIT = 38;
+const FIRM_ORBIT = 46;
+
+// Radius scales logarithmically with population: 7px at 15k → 32px at 950k
+const LOG_POP_MIN = Math.log10(15_000);
+const LOG_POP_MAX = Math.log10(950_000);
+function nodeRadius(pop: number): number {
+  const t = (Math.log10(Math.max(pop, 15_000)) - LOG_POP_MIN) / (LOG_POP_MAX - LOG_POP_MIN);
+  return Math.round(7 + 25 * t);
+}
 
 export default function NodeMap() {
-  const { gameState, selectedNodeId, selectedFirmId, selectNode, selectFirm } = useGameStore();
+  const { gameState, selectedNodeId, selectedFirmId, selectNode, selectFirm, openStoreFirm, openCityScreen,
+          mapTransform: view, setMapTransform: setView } = useGameStore();
   const svgRef = useRef<SVGSVGElement>(null);
 
-  // Pan/zoom state
-  const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
+  // Pan/zoom state lives in the store so it survives city screen open/close
   const dragging = useRef(false);
   const lastPos = useRef({ x: 0, y: 0 });
 
@@ -53,7 +60,7 @@ export default function NodeMap() {
 
   if (!gameState) return null;
 
-  const { cityNodes, mapLinks, firms, corporations, harborNode } = gameState;
+  const { cityNodes, mapLinks, firms, corporations } = gameState;
   const playerCorp = Object.values(corporations).find((c) => c.isPlayer);
   const aiCorp = Object.values(corporations).find((c) => !c.isPlayer);
 
@@ -97,17 +104,16 @@ export default function NodeMap() {
           const to = cityNodes[link.toNodeId];
           if (!from || !to) return null;
 
-          // Volume = sum of active contracts on this link (approximated by shared firms)
-          const weight = 1 + link.investmentLevel;
-
+          const isHighway = link.linkType === "highway";
           return (
             <line
               key={link.id}
               x1={from.position.x} y1={from.position.y}
-              x2={to.position.x} y2={to.position.y}
-              stroke="#2a3347"
-              strokeWidth={weight}
+              x2={to.position.x}   y2={to.position.y}
+              stroke={isHighway ? "#c87a1a" : "#2a3347"}
+              strokeWidth={isHighway ? 3 : 1 + link.investmentLevel}
               strokeLinecap="round"
+              opacity={isHighway ? 0.85 : 1}
             />
           );
         })}
@@ -151,21 +157,23 @@ export default function NodeMap() {
           const playerFirms = firmsHere.filter((f) => f.corporationId === playerCorp?.id);
           const aiFirms = firmsHere.filter((f) => f.corporationId === aiCorp?.id);
           const isSelected = selectedNodeId === node.id;
-          const isHarbor = node.type === "harbor";
+          // Port nodes (type === "port") are port cities: they get harbor styling + the ⚓ icon.
+          // Standalone harbor nodes (type === "harbor") would also get harbor styling if ever added.
+          const isHarborNode = node.type === "harbor" || node.type === "port";
 
           let nodeColor = "#2a3347";
-          if (isHarbor) nodeColor = "var(--blue-dim)";
+          if (isHarborNode) nodeColor = "var(--blue-dim)";
           else if (playerFirms.length > 0 && aiFirms.length > 0) nodeColor = "#5a3d1a"; // contested
           else if (playerFirms.length > 0) nodeColor = "var(--gold-dim)";
           else if (aiFirms.length > 0) nodeColor = "#5a1a1a";
 
           let strokeColor = "#3a4a60";
           if (isSelected) strokeColor = "var(--accent)";
-          else if (isHarbor) strokeColor = "var(--blue)";
+          else if (isHarborNode) strokeColor = "var(--blue)";
           else if (playerFirms.length > 0 && aiFirms.length === 0) strokeColor = "var(--gold)";
           else if (aiFirms.length > 0 && playerFirms.length === 0) strokeColor = "var(--red)";
 
-          const r = node.type === "city" ? NODE_R : node.type === "harbor" ? NODE_R + 4 : NODE_R - 6;
+          const r = nodeRadius(node.population);
 
           return (
             <g key={node.id} data-interactive="true">
@@ -179,11 +187,11 @@ export default function NodeMap() {
                 strokeWidth={isSelected ? 2.5 : 1.5}
                 filter={isSelected ? "url(#glow)" : undefined}
                 style={{ cursor: "pointer" }}
-                onClick={() => selectNode(isSelected ? null : node.id)}
+                onClick={() => openCityScreen(node.id)}
               />
 
-              {/* Harbor label */}
-              {isHarbor && (
+              {/* Harbor icon — shown on port and harbor nodes */}
+              {isHarborNode && (
                 <text
                   x={node.position.x} y={node.position.y}
                   textAnchor="middle" dominantBaseline="middle"
@@ -197,7 +205,7 @@ export default function NodeMap() {
                 x={node.position.x}
                 y={node.position.y + r + 12}
                 textAnchor="middle"
-                fontSize={node.type === "town" ? 9 : 10}
+                fontSize={r < 12 ? 8 : r < 18 ? 9 : 10}
                 fill={isSelected ? "var(--text-head)" : "var(--text-dim)"}
                 fontWeight={isSelected ? 600 : 400}
                 style={{ userSelect: "none", pointerEvents: "none" }}
@@ -234,7 +242,11 @@ export default function NodeMap() {
                       onClick={(e) => {
                         e.stopPropagation();
                         selectNode(node.id);
-                        selectFirm(isFirmSelected ? null : firm.id);
+                        if (firm.type === "store" && isPlayerFirm) {
+                          openStoreFirm(firm.id);
+                        } else {
+                          selectFirm(isFirmSelected ? null : firm.id);
+                        }
                       }}
                     />
                     <text
@@ -248,9 +260,9 @@ export default function NodeMap() {
               })}
 
               {/* Slot availability dots for selected node */}
-              {isSelected && node.firmSlots > 0 && (
-                Array.from({ length: node.firmSlots - firmsHere.length }).map((_, i) => {
-                  const angle = ((firmsHere.length + i) / Math.max(node.firmSlots, 1)) * 2 * Math.PI - Math.PI / 2;
+              {isSelected && node.factorySlots > 0 && (
+                Array.from({ length: node.factorySlots - firmsHere.length }).map((_, i) => {
+                  const angle = ((firmsHere.length + i) / Math.max(node.factorySlots, 1)) * 2 * Math.PI - Math.PI / 2;
                   const orbitR = r + FIRM_ORBIT - 10;
                   const fx = node.position.x + Math.cos(angle) * orbitR;
                   const fy = node.position.y + Math.sin(angle) * orbitR;
@@ -274,6 +286,7 @@ export default function NodeMap() {
           { color: "var(--red)", label: "Rival presence" },
           { color: "var(--blue)", label: "Harbor" },
           { color: "var(--green)", label: "Internal contract" },
+          { color: "#c87a1a", label: "Highway" },
         ].map(({ color, label }, i) => (
           <g key={label} transform={`translate(0, ${i * 18})`}>
             <circle cx={6} cy={6} r={5} fill={color} opacity={0.8} />

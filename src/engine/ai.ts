@@ -2,7 +2,7 @@ import type { GameState, Tender } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { submitTenderBid } from "./tenders";
 import { startInvestment } from "./investments";
-import { takeLoan } from "./loans";
+import { drawCredit } from "./loans";
 import { generateId } from "./utils";
 import { makeFirm } from "./newGame";
 
@@ -112,22 +112,23 @@ function expandIfOpportunity(state: GameState, corpId: string): void {
   const cityNode = state.cityNodes[targetCityId];
   if (!cityNode) return;
 
-  const existingFirmsInCity = Object.values(state.firms).filter(
-    (f) => f.cityNodeId === targetCityId && f.corporationId === corpId
-  ).length;
-
-  if (existingFirmsInCity >= cityNode.firmSlots) return;
+  // AI builds medium B-class stores; find a free B-medium location
+  const freeLoc = cityNode.storeLocations.find(
+    (l) => l.locationClass === "B" && l.size === "medium" && l.occupiedByFirmId === null
+  );
+  if (!freeLoc) return;
 
   // Post-MVP: AI should build factories and farms to participate in industrial supply chains.
   const storeCost = GameConfig.ai.firmEstablishmentCost;
   if (corp.cash < storeCost) {
     if (corp.cash >= storeCost / 2) {
-      takeLoan(state, corpId, GameConfig.ai.emergencyLoanAmount, GameConfig.loans.baseAnnualInterestRate * 100);
+      drawCredit(state, corpId, GameConfig.ai.emergencyLoanAmount);
     }
     return;
   }
 
-  buildFirm(state, corpId, targetCityId, "store");
+  const newFirmId = buildFirm(state, corpId, targetCityId, "store");
+  if (newFirmId) freeLoc.occupiedByFirmId = newFirmId;
 }
 
 function investInExistingFirms(state: GameState, corpId: string): void {
@@ -161,10 +162,11 @@ function buildFirm(
   corpId: string,
   cityNodeId: string,
   type: "farm" | "factory" | "store"
-): void {
+): string {
   const corp = state.corporations[corpId];
   const firmId = generateId();
   const name = `${corp.name} ${type.charAt(0).toUpperCase() + type.slice(1)}`;
   state.firms[firmId] = makeFirm(firmId, corpId, cityNodeId, type, name, corp.corporateTrainingIntensity);
   corp.firmIds.push(firmId);
+  return firmId;
 }

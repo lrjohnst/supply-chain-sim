@@ -16,7 +16,7 @@
  * to MVP 2.0 and must not be folded into other changes.
  */
 
-import type { ProductId, FirmType } from "../types";
+import type { ProductId, FirmType, InvestmentType } from "../types";
 
 // ============================================================
 // Types
@@ -80,6 +80,7 @@ export interface ProductProfile {
    * Default false for all MVP products.
    */
   storageFirmEligible: boolean;
+
 }
 
 // ============================================================
@@ -327,6 +328,23 @@ export function isSoldByHarbor(id: ProductId): boolean {
 }
 
 /**
+ * Canonical section → sellable product list, in priority order.
+ * Order matters: it determines which product gets first access to a
+ * section's shared capacity pool when capacity is constrained.
+ * Single source of truth — used by retail.ts, harborSpotPurchase.ts, and StoreFirmOverview.tsx.
+ */
+export const STORE_SECTION_PRODUCTS: Partial<Record<InvestmentType, ProductId[]>> = {
+  grocery_section:     ["chicken", "chicken_soup", "ice_cream_strawberry"],
+  electronics_section: ["laptop_branded", "printer_branded"],
+};
+
+/** Maps a base section investment type to its expansion investment type, if any. */
+export const SECTION_EXPANSION_TYPE: Partial<Record<InvestmentType, InvestmentType>> = {
+  grocery_section:     "grocery_section_expansion",
+  electronics_section: "electronics_section_expansion",
+};
+
+/**
  * Returns sellable product IDs for a store based on which sections are built.
  * Single source of truth — used by retail.ts, harborSpotPurchase.ts, and RightPanel.tsx.
  */
@@ -336,7 +354,20 @@ export function getStoreSellableProducts(
   const has = (t: string) =>
     firm.investments.some((i) => i.type === t && i.status === "complete");
   const products: ProductId[] = [];
-  if (has("grocery_section")) products.push("chicken", "chicken_soup", "ice_cream_strawberry");
-  if (has("electronics_section")) products.push("laptop_branded", "printer_branded");
+  for (const [sectionType, sectionProducts] of Object.entries(STORE_SECTION_PRODUCTS)) {
+    if (has(sectionType)) products.push(...sectionProducts!);
+  }
   return products;
+}
+
+/** Total product slots in a section: 1 base + 1 per completed expansion investment. */
+export function getSectionSlotCount(
+  firm: { investments: { type: string; status: string }[] },
+  sectionType: InvestmentType
+): number {
+  const expType = SECTION_EXPANSION_TYPE[sectionType];
+  const expCount = expType
+    ? firm.investments.filter((i) => i.type === expType && i.status === "complete").length
+    : 0;
+  return 1 + expCount;
 }

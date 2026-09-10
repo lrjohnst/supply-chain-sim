@@ -2,44 +2,44 @@ import { useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { euros } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
-import { computeTotalAssets } from "../../engine/loans";
+import { computeTotalAssets, getCreditLimit, getCreditFacility } from "../../engine/loans";
 
 export default function FinanceScreen() {
-  const { gameState, requestLoan, setCorporateTrainingIntensity, setMarketingBudget } = useGameStore();
-  const [loanAmount, setLoanAmount] = useState("");
-  const [loanTurns, setLoanTurns] = useState("8");
-  const [loanError, setLoanError] = useState<string | null>(null);
+  const { gameState, drawCredit, repayCredit, setCorporateTrainingIntensity, setMarketingBudget } = useGameStore();
+  const [drawAmount, setDrawAmount] = useState("");
+  const [repayAmount, setRepayAmount] = useState("");
+  const [drawError, setDrawError] = useState<string | null>(null);
+  const [repayError, setRepayError] = useState<string | null>(null);
 
   if (!gameState) return null;
   const playerCorp = Object.values(gameState.corporations).find((c) => c.isPlayer);
   if (!playerCorp) return null;
 
-  const loans = playerCorp.loanIds.map((id) => gameState.loans[id]).filter(Boolean);
-  const totalDebt = loans.reduce((s, l) => s + l.outstandingBalance, 0);
+  const facility = getCreditFacility(gameState, playerCorp.id);
+  const creditLimit = getCreditLimit(gameState, playerCorp.id);
+  const outstanding = facility?.outstandingBalance ?? 0;
+  const available = Math.max(0, creditLimit - outstanding);
+  const annualRate = facility?.annualInterestRate ?? gameState.currentBaseInterestRate;
+  const quarterlyRate = annualRate / GameConfig.game.quartersPerYear;
+  const interestPerTurn = outstanding * quarterlyRate;
 
-  function handleLoan() {
-    const amount = parseFloat(loanAmount);
-    const turns = parseInt(loanTurns);
-    if (isNaN(amount) || amount <= 0) { setLoanError("Enter a valid loan amount."); return; }
-    if (isNaN(turns)) { setLoanError("Enter a valid duration."); return; }
-    const err = requestLoan(amount, turns);
-    if (err) setLoanError(err);
-    else { setLoanError(null); setLoanAmount(""); }
+  function handleDraw() {
+    const amount = parseFloat(drawAmount);
+    if (isNaN(amount) || amount <= 0) { setDrawError("Enter a valid amount."); return; }
+    const err = drawCredit(amount);
+    if (err) setDrawError(err);
+    else { setDrawError(null); setDrawAmount(""); }
   }
 
-  const quarterlyPaymentEstimate = (amount: number, turns: number) => {
-    const r = gameState!.currentBaseInterestRate / 4;
-    if (r === 0) return amount / turns;
-    return (amount * r) / (1 - Math.pow(1 + r, -turns));
-  };
+  function handleRepay() {
+    const amount = parseFloat(repayAmount);
+    if (isNaN(amount) || amount <= 0) { setRepayError("Enter a valid amount."); return; }
+    const err = repayCredit(amount);
+    if (err) setRepayError(err);
+    else { setRepayError(null); setRepayAmount(""); }
+  }
 
-  const parsedAmount = parseFloat(loanAmount) || 0;
-  const parsedTurns = parseInt(loanTurns) || 8;
-  const estimatedPayment = parsedAmount > 0 ? quarterlyPaymentEstimate(parsedAmount, parsedTurns) : 0;
-
-  const cfg = GameConfig.loans;
-  const totalAssets = computeTotalAssets(gameState, playerCorp.id);
-  const maxLoanAmount = Math.max(totalAssets, cfg.minAssetFloorForLoan) * cfg.leverageRatioOnAssets;
+  const utilizationPct = creditLimit > 0 ? outstanding / creditLimit : 0;
 
   return (
     <div style={{ padding: 24, overflowY: "auto", height: "100%" }}>
@@ -47,74 +47,87 @@ export default function FinanceScreen() {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, maxWidth: 800 }}>
 
-        {/* Active loans */}
-        <div style={cardStyle}>
-          <h3 style={{ marginBottom: 12 }}>Active loans</h3>
-          {loans.length === 0 && (
-            <div style={{ color: "var(--text-dim)", fontSize: 12 }}>No active loans.</div>
-          )}
-          {loans.map((loan) => (
-            <div key={loan.id} style={{
-              background: "var(--bg)", borderRadius: 4, padding: "10px 12px", marginBottom: 8,
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontWeight: 600 }}>Principal {euros(loan.principal)}</span>
-                <span style={{ color: "var(--danger)" }}>{(loan.annualInterestRate * 100).toFixed(1)}% p.a.</span>
+        {/* Credit facility overview */}
+        <div style={{ ...cardStyle, gridColumn: "span 2" }}>
+          <h3 style={{ marginBottom: 12 }}>Revolving credit facility</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 16 }}>
+            <Stat label="Credit limit" value={euros(creditLimit)} />
+            <Stat label="Outstanding" value={euros(outstanding)} danger={outstanding > 0} />
+            <Stat label="Available" value={euros(available)} />
+            <Stat label="Rate" value={`${(annualRate * 100).toFixed(1)}% p.a.`} />
+          </div>
+          {outstanding > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>
+                <span>Utilisation {(utilizationPct * 100).toFixed(0)}%</span>
+                <span>Interest accruing: <span style={{ color: "var(--danger)" }}>{euros(interestPerTurn)}/turn</span></span>
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                Outstanding: {euros(loan.outstandingBalance)}
-                {" · "}Quarterly payment: {euros(loan.quarterlyPayment)}
-              </div>
-              {/* Balance bar */}
-              <div style={{ height: 3, background: "var(--border)", borderRadius: 2, marginTop: 6 }}>
+              <div style={{ height: 4, background: "var(--border)", borderRadius: 2 }}>
                 <div style={{
                   height: "100%",
-                  width: `${(loan.outstandingBalance / loan.principal) * 100}%`,
-                  background: "var(--danger)", borderRadius: 2,
+                  width: `${Math.min(100, utilizationPct * 100)}%`,
+                  background: utilizationPct > 0.75 ? "var(--danger)" : "var(--warn)",
+                  borderRadius: 2,
                 }} />
               </div>
             </div>
-          ))}
-          {totalDebt > 0 && (
-            <div style={{ marginTop: 8, color: "var(--text-dim)", fontSize: 12 }}>
-              Total debt: <span style={{ color: "var(--danger)", fontWeight: 600 }}>{euros(totalDebt)}</span>
-            </div>
           )}
+          <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
+            Variable rate — tracks the base interest rate. Draw and repay freely each turn.
+            Limit is based on total asset value × leverage ratio.
+          </div>
         </div>
 
-        {/* Take a loan */}
+        {/* Draw credit */}
         <div style={cardStyle}>
-          <h3 style={{ marginBottom: 12 }}>Take a loan</h3>
+          <h3 style={{ marginBottom: 12 }}>Draw credit</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div>
               <label style={labelStyle}>Amount (€)</label>
               <input
-                type="number" value={loanAmount}
-                onChange={(e) => setLoanAmount(e.target.value)}
-                placeholder={`Max ~${euros(maxLoanAmount)}`}
+                type="number" value={drawAmount}
+                onChange={(e) => setDrawAmount(e.target.value)}
+                placeholder={`Max ${euros(available)}`}
                 style={{ width: "100%" }}
               />
             </div>
-            <div>
-              <label style={labelStyle}>Duration (turns)</label>
-              <input
-                type="number" value={loanTurns}
-                onChange={(e) => setLoanTurns(e.target.value)}
-                placeholder="8"
-                style={{ width: "100%" }}
-              />
-            </div>
-            {parsedAmount > 0 && (
+            {drawAmount && parseFloat(drawAmount) > 0 && (
               <div style={{ fontSize: 11, color: "var(--text-dim)", background: "var(--bg)", padding: "8px 10px", borderRadius: 4 }}>
-                Base rate: {(gameState.currentBaseInterestRate * 100).toFixed(1)}% p.a.
-                <br />
-                Est. quarterly payment: <strong style={{ color: "var(--warn)" }}>{euros(estimatedPayment)}</strong>
-                <br />
-                Total repayment: {euros(estimatedPayment * parsedTurns)}
+                Additional interest: <strong style={{ color: "var(--warn)" }}>
+                  {euros(parseFloat(drawAmount) * quarterlyRate)}/turn
+                </strong>
               </div>
             )}
-            {loanError && <div style={{ color: "var(--danger)", fontSize: 11 }}>{loanError}</div>}
-            <button className="primary" onClick={handleLoan}>Take loan</button>
+            {drawError && <div style={{ color: "var(--danger)", fontSize: 11 }}>{drawError}</div>}
+            <button className="primary" onClick={handleDraw} disabled={available <= 0}>
+              Draw funds
+            </button>
+          </div>
+        </div>
+
+        {/* Repay credit */}
+        <div style={cardStyle}>
+          <h3 style={{ marginBottom: 12 }}>Repay credit</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <label style={labelStyle}>Amount (€)</label>
+              <input
+                type="number" value={repayAmount}
+                onChange={(e) => setRepayAmount(e.target.value)}
+                placeholder={outstanding > 0 ? `Max ${euros(outstanding)}` : "Nothing to repay"}
+                style={{ width: "100%" }}
+                disabled={outstanding <= 0}
+              />
+            </div>
+            {repayAmount && parseFloat(repayAmount) > 0 && outstanding > 0 && (
+              <div style={{ fontSize: 11, color: "var(--text-dim)", background: "var(--bg)", padding: "8px 10px", borderRadius: 4 }}>
+                Remaining after repayment: <strong>{euros(Math.max(0, outstanding - parseFloat(repayAmount)))}</strong>
+              </div>
+            )}
+            {repayError && <div style={{ color: "var(--danger)", fontSize: 11 }}>{repayError}</div>}
+            <button className="primary" onClick={handleRepay} disabled={outstanding <= 0}>
+              Repay
+            </button>
           </div>
         </div>
 
@@ -142,7 +155,6 @@ export default function FinanceScreen() {
             <span>100%</span>
           </div>
           {playerCorp.firmIds.length > 0 && (() => {
-            // Post-MVP UI: expandable per-firm breakdown showing each firm's name, intensity, and estimated cost per turn.
             const totalCost = playerCorp.firmIds.reduce((sum, fid) => {
               const f = gameState.firms[fid];
               if (!f) return sum;
@@ -168,7 +180,7 @@ export default function FinanceScreen() {
             min={0} max={GameConfig.marketing.maxBudgetPerTurn} step={1000}
             value={playerCorp.marketingBudgetPerTurn}
             onChange={(e) => setMarketingBudget(parseInt(e.target.value))}
-            style={{ width: "100%" }}
+            style={{ width: "100%", accentColor: "var(--gold)" }}
           />
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
             <span>€0</span>
@@ -199,6 +211,17 @@ export default function FinanceScreen() {
             />
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 600, fontFamily: "IBM Plex Mono, monospace", color: danger ? "var(--danger)" : "var(--text-head)" }}>
+        {value}
       </div>
     </div>
   );

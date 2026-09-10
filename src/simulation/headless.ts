@@ -8,7 +8,6 @@ import { tick } from "../engine/tick";
 import { computeCorporateBooks } from "../engine/books";
 import { corporationNetWorth } from "../engine/utils";
 import { startInvestment } from "../engine/investments";
-import { takeLoan } from "../engine/loans";
 import { createContract } from "../engine/contracts";
 import type { GameState, ProductId } from "../types";
 import { GameConfig } from "../config/gameConfig";
@@ -64,17 +63,27 @@ function buildFirm(
   const COSTS = { farm: 15_000, factory: 25_000, store: 10_000 };
   const corp = state.corporations[corpId];
   const city = state.cityNodes[cityNodeId];
-  if (!city || city.firmSlots === 0) return null;
-  const firmsInCity = Object.values(state.firms).filter(
-    (f) => f.cityNodeId === cityNodeId && f.corporationId === corpId
-  ).length;
-  if (firmsInCity >= city.firmSlots) return null;
+  if (!city) return null;
+  if (type === "store") {
+    const freeLoc = city.storeLocations.find((l) => l.locationClass === "B" && l.occupiedByFirmId === null);
+    if (!freeLoc) return null;
+  } else {
+    if (city.factorySlots === 0) return null;
+    const firmsInCity = Object.values(state.firms).filter(
+      (f) => f.cityNodeId === cityNodeId && f.corporationId === corpId && f.type !== "store"
+    ).length;
+    if (firmsInCity >= city.factorySlots) return null;
+  }
   if (corp.cash < COSTS[type]) return null;
 
   const id = Math.random().toString(36).slice(2, 10);
   state.firms[id] = makeFirm(id, corpId, cityNodeId, type, name);
   corp.firmIds.push(id);
   corp.cash -= COSTS[type];
+  if (type === "store") {
+    const loc = city.storeLocations.find((l) => l.locationClass === "B" && l.occupiedByFirmId === null);
+    if (loc) loc.occupiedByFirmId = id;
+  }
   return id;
 }
 

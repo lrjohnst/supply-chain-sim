@@ -67,14 +67,8 @@ export function checkWinCondition(state: GameState): WinConditionResult {
     }
   }
 
-  // Time limit
-  if (state.turn + 1 >= GameConfig.game.turnsNormal) {
-    const playerNW = playerCorp ? corporationNetWorth(state, playerCorp.id) : 0;
-    return {
-      gameOver: true, isWin: false, isLoss: true,
-      winner: null, loser: null, reason: "lost_time_limit", netWorth: playerNW,
-    };
-  }
+  // Time limit — disabled; stub kept for future re-activation.
+  // if (state.turn + 1 >= GameConfig.game.turnsNormal) { ... }
 
   return NO_RESULT;
 }

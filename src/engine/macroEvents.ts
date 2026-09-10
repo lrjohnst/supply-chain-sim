@@ -3,6 +3,7 @@ import { GameConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
 import { getHarborSoldProducts, createHarborShock } from "./harbor";
 import { displayName } from "./products";
+import { awardTender } from "./tenders";
 
 // ============================================================
 // Fire pending events
@@ -73,8 +74,12 @@ function applyEvent(state: GameState, event: MacroEvent): void {
 
     case "tender_closure": {
       const tenderId = event.payload.tenderId as string;
-      if (state.tenders[tenderId]) {
-        state.tenders[tenderId].status = "closed";
+      const tender = state.tenders[tenderId];
+      if (tender && tender.status === "open") {
+        // Award immediately on forced closure — same logic as natural closeTurn
+        // evaluation, so any existing bids still produce a contract instead of
+        // being silently dropped.
+        awardTender(state, tender);
       }
       break;
     }

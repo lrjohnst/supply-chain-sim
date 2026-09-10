@@ -2,6 +2,7 @@ import type { GameState, Firm, Investment, InvestmentType, RecipeKey } from "../
 import { GameConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
 import { postTransaction } from "./ledger";
+import { computeEmployeeCount } from "./operatingCosts";
 
 // TODO Post-MVP: End Turn gate prompt when investment completes and firm has no queued successor.
 
@@ -83,8 +84,22 @@ export function advanceInvestments(state: GameState): PausedInvestmentInfo[] {
         inv.turnsRemaining -= 1;
 
         if (inv.turnsRemaining <= 0) {
+          // Store section investments add untrained staff. Dilute trainedFraction
+          // proportionally to the headcount increase before marking complete.
+          const isSection = firm.type === "store"
+            && GameConfig.storeTraining.baseEmployeesPerSection[inv.type] !== undefined;
+          const oldEmployeeCount = isSection ? computeEmployeeCount(firm) : 0;
+
           inv.status         = "complete";
           inv.turnsRemaining = 0;
+
+          if (isSection) {
+            const newEmployeeCount = computeEmployeeCount(firm);
+            firm.employeeCount = newEmployeeCount;
+            if (newEmployeeCount > 0) {
+              firm.trainedFraction = (firm.trainedFraction * oldEmployeeCount) / newEmployeeCount;
+            }
+          }
 
           // Production lines: add an unconfigured line setup for the player to configure.
           if (inv.type === "production_line") {
@@ -152,14 +167,25 @@ export function startInvestment(
     return `${type.replace(/_/g, " ")} is not a valid investment for a ${firm.type}.`;
   }
 
-  // ---- Slot limit (all statuses consume a slot) ----
-  if (firm.investments.length >= GameConfig.firmInvestmentSlotLimit) {
+  // ---- Slot limit (size-based for stores, flat for other firm types) ----
+  const slotLimit = firm.type === "store"
+    ? GameConfig.storeSlots.investmentSlotsBySize[firm.size]
+    : GameConfig.firmInvestmentSlotLimit;
+  if (firm.investments.length >= slotLimit) {
     return "No investment slots remaining in this firm.";
   }
 
   // ---- Max-per-firm ----
   const existingCount = firm.investments.filter((i) => i.type === type).length;
-  if (existingCount >= GameConfig.investments.maxPerFirm[type]) {
+
+  // Section expansions use size-aware limit instead of flat maxPerFirm
+  if (type === "grocery_section_expansion" || type === "electronics_section_expansion") {
+    const baseType = type === "grocery_section_expansion" ? "grocery_section" : "electronics_section";
+    const hasBase = firm.investments.some((i) => i.type === baseType && i.status === "complete");
+    if (!hasBase) return `Build a ${baseType.replace(/_/g, " ")} first.`;
+    const maxExp = GameConfig.storeSlots.expansionMaxBySize[firm.size];
+    if (existingCount >= maxExp) return `Maximum expansions for a ${firm.size} store reached (${maxExp}).`;
+  } else if (existingCount >= GameConfig.investments.maxPerFirm[type]) {
     return `Maximum number of ${type.replace(/_/g, " ")} investments already built.`;
   }
 

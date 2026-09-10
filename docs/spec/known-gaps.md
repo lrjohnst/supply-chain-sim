@@ -1,5 +1,8 @@
 # PART 6: KNOWN GAPS IN MVP
 
+> **Stale.** This list describes MVP 1.0 and has not been revised since the map
+> system was rebuilt. For current state and open threads see [handoff.md](handoff.md).
+
 - AI only builds stores, never factories or farms
 - AI never submits tender bids for industrial output
 - Market-buyer volume breach has no fine (no counterparty)
@@ -14,5 +17,6 @@
 ---
 
 *End of Master Specification Document v1.0*
-*Next session: start fresh Claude Code chat and attach this document*
-*MVP 2.0 first priorities: sourcing screen, AI industrial participation, specialization bonus, multiple win conditions, business development tree*
+*MVP 2.0 first priorities (as of v1.0): sourcing screen, AI industrial participation, specialization bonus, multiple win conditions, business development tree*
+
+*Current priorities have moved on — see [handoff.md](handoff.md).*

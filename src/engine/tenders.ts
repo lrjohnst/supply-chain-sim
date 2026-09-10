@@ -20,7 +20,13 @@ export function evaluateTenders(state: GameState): void {
   }
 }
 
-function awardTender(state: GameState, tender: Tender): void {
+/**
+ * Award a tender immediately using its current bids: sorts and allocates
+ * volume, creates a delivery contract per awarded bid, notifies bidders.
+ * Used both for natural closeTurn evaluation and forced closure
+ * (e.g. the tender_closure macro event) so no bid is ever silently dropped.
+ */
+export function awardTender(state: GameState, tender: Tender): void {
   if (tender.bids.length === 0) {
     tender.status = "expired";
     return;

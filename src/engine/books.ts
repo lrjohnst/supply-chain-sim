@@ -10,6 +10,7 @@ export function computeFirmBooks(state: GameState, firmId: string, turn: number)
   let inputCosts = 0;
   let overheadCosts = 0;
   let operatingCosts = 0;
+  let staffWageCosts = 0;
   let capitalExpenditure = 0;
 
   // Loan interest and repayment are intentionally absent here. Loans belong to corporations, not firms.
@@ -38,6 +39,9 @@ export function computeFirmBooks(state: GameState, firmId: string, turn: number)
         // transport_cost is a firm-level category; buckets here when posted.
         operatingCosts += Math.abs(tx.total);
         break;
+      case "staff_cost":
+        staffWageCosts += Math.abs(tx.total);
+        break;
       case "investment_cost":
         capitalExpenditure += Math.abs(tx.total);
         break;
@@ -53,8 +57,9 @@ export function computeFirmBooks(state: GameState, firmId: string, turn: number)
     inputCosts,
     overheadCosts,
     operatingCosts,
+    staffWageCosts,
     capitalExpenditure,
-    netProfit: revenue - inputCosts - overheadCosts - operatingCosts - capitalExpenditure,
+    netProfit: revenue - inputCosts - overheadCosts - operatingCosts - staffWageCosts - capitalExpenditure,
     lines,
   };
 }
@@ -72,6 +77,7 @@ export function computeCorporateBooks(
   let inputCosts = 0;
   let overheadCosts = 0;
   let operatingCosts = 0;
+  let staffWageCosts = 0;
   let capitalExpenditure = 0;
   let loanInterest = 0;
 
@@ -92,6 +98,9 @@ export function computeCorporateBooks(
       case "marketing_cost":
       case "transport_cost":
         operatingCosts += Math.abs(tx.total);
+        break;
+      case "staff_cost":
+        staffWageCosts += Math.abs(tx.total);
         break;
       case "investment_cost":
         capitalExpenditure += Math.abs(tx.total);
@@ -114,9 +123,10 @@ export function computeCorporateBooks(
     inputCosts,
     overheadCosts,
     operatingCosts,
+    staffWageCosts,
     capitalExpenditure,
     loanInterest,
-    netProfit: revenue - inputCosts - overheadCosts - operatingCosts - capitalExpenditure - loanInterest,
+    netProfit: revenue - inputCosts - overheadCosts - operatingCosts - staffWageCosts - capitalExpenditure - loanInterest,
     // Post-MVP: net worth should be read from EconomicHistory for the selected turn rather than
     // always reflecting current state. Currently net worth is always current regardless of which
     // historical turn is being viewed.

@@ -163,6 +163,9 @@ export default function BooksScreen() {
                 <SummaryRow label="Overhead" value={books.overheadCosts} />
               )}
               <SummaryRow label="Operating" value={books.operatingCosts} />
+              {books.staffWageCosts > 0 && (
+                <SummaryRow label="Staff wages" value={books.staffWageCosts} />
+              )}
               {books.capitalExpenditure > 0 && (
                 <SummaryRow label="Capital exp." value={books.capitalExpenditure} />
               )}

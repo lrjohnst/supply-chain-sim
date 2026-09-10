@@ -2,23 +2,22 @@ import { useState } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { euros, pct, qty } from "../shared/fmt";
 import { GameConfig } from "../../config/gameConfig";
-import { estimatedDemand, computeRampFraction } from "../../engine/retail";
-import { getBasePrice } from "../../engine/harbor";
-import { getStoreSellableProducts } from "../../engine/products";
-import { transportCostToNode, linksToHarbor } from "../../engine/utils";
+import { estimatedDemand } from "../../engine/retail";
 import { getHarborSoldProducts } from "../../engine/harbor";
-import { displayName, getProductsHandledBy, isSoldByHarbor } from "../../engine/products";
+import { transportCostToNode, linksToHarbor } from "../../engine/utils";
+import { displayName, getProductsHandledBy } from "../../engine/products";
 import type { Firm, FirmType, InvestmentType, ProductId, RecipeKey } from "../../types";
 
 export default function RightPanel() {
   const {
     gameState, selectedNodeId, selectedFirmId,
-    selectFirm, buildFirm, buildInvestment,
+    selectFirm, buildFirm, openStoreFirm,
   } = useGameStore();
 
   const [buildType, setBuildType] = useState<"farm" | "factory" | "store">("store");
   const [buildName, setBuildName] = useState("");
   const [buildError, setBuildError] = useState<string | null>(null);
+  const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
 
   if (!gameState) return null;
 
@@ -26,7 +25,8 @@ export default function RightPanel() {
   const firm = selectedFirmId ? gameState.firms[selectedFirmId] : null;
   const playerCorp = Object.values(gameState.corporations).find((c) => c.isPlayer);
 
-  if (firm && playerCorp && firm.corporationId === playerCorp.id) {
+  // Store firms open the full-screen overview — handled in App.tsx via openStoreFirm
+  if (firm && playerCorp && firm.corporationId === playerCorp.id && firm.type !== "store") {
     return <FirmPanel firm={firm} />;
   }
 
@@ -43,17 +43,32 @@ export default function RightPanel() {
   const firmsHere = Object.values(gameState.firms).filter(
     (f) => f.cityNodeId === node.id
   );
-  const playerFirmsHere = firmsHere.filter(
-    (f) => f.corporationId === playerCorp?.id
-  );
-  const slotsRemaining = node.firmSlots - firmsHere.length;
+  const nonStoreFirmsHere = firmsHere.filter((f) => f.type !== "store");
+  const factorySlotsRemaining = node.factorySlots - nonStoreFirmsHere.length;
+
+  // Derive free/total per class from atomic location list
+  const freeByClass = { A: 0, B: 0, C: 0 };
+  const totalByClass = { A: 0, B: 0, C: 0 };
+  for (const loc of node.storeLocations) {
+    totalByClass[loc.locationClass]++;
+    if (loc.occupiedByFirmId === null) freeByClass[loc.locationClass]++;
+  }
+  const hasAnyStoreLocs = node.storeLocations.length > 0;
+
+  const selectedLoc = selectedLocationId
+    ? node.storeLocations.find((l) => l.id === selectedLocationId) ?? null
+    : null;
+  const canBuildStore = selectedLoc !== null && selectedLoc.occupiedByFirmId === null;
+  const canBuildProduction = factorySlotsRemaining > 0;
 
   function handleBuild() {
     if (!node) return;
     const name = buildName.trim() || `${buildType.charAt(0).toUpperCase() + buildType.slice(1)}`;
-    const err = buildFirm(node.id, buildType, name);
+    const err = buildType === "store"
+      ? buildFirm(node.id, buildType, name, selectedLocationId ?? undefined)
+      : buildFirm(node.id, buildType, name);
     if (err) { setBuildError(err); }
-    else { setBuildError(null); setBuildName(""); }
+    else { setBuildError(null); setBuildName(""); setSelectedLocationId(null); }
   }
 
   return (
@@ -68,8 +83,11 @@ export default function RightPanel() {
       <div style={sectionStyle}>
         <Row label="Population" value={qty(node.population)} />
         <Row label="Energy cost" value={`${(node.energyCostMultiplier * 100).toFixed(0)}% of base`} />
-        <Row label="Harbor access" value={node.hasHarborAccess ? "Yes" : "No"} />
-        <Row label="Firm slots" value={`${firmsHere.length} / ${node.firmSlots}`} />
+        <Row label="Harbor access" value={node.type === "port" || node.type === "harbor" ? "Port city" : "No"} />
+        <Row label="Factory slots" value={`${Object.values(gameState.firms).filter(f => f.cityNodeId === node.id && f.type !== "store").length} / ${node.factorySlots}`} />
+        {(["A", "B", "C"] as const).map((cls) => totalByClass[cls] > 0 && (
+          <Row key={cls} label={`Store locations ${cls}`} value={`${freeByClass[cls]} free / ${totalByClass[cls]}`} />
+        ))}
       </div>
 
       {firmsHere.length > 0 && (
@@ -79,6 +97,7 @@ export default function RightPanel() {
           <div style={{ padding: "4px 16px 8px" }}>
             {firmsHere.map((f) => {
               const isPlayer = f.corporationId === playerCorp?.id;
+              const isStore = f.type === "store";
               return (
                 <div
                   key={f.id}
@@ -86,12 +105,23 @@ export default function RightPanel() {
                     display: "flex", alignItems: "center", gap: 8,
                     padding: "4px 0", cursor: "pointer",
                   }}
-                  onClick={() => selectFirm(selectedFirmId === f.id ? null : f.id)}
+                  onClick={() => {
+                    if (isStore && isPlayer) {
+                      openStoreFirm(f.id);
+                    } else {
+                      selectFirm(selectedFirmId === f.id ? null : f.id);
+                    }
+                  }}
                 >
                   <span style={{ fontSize: 14 }}>
                     {f.type === "farm" ? "🌾" : f.type === "factory" ? "🏭" : "🏪"}
                   </span>
                   <span style={{ flex: 1, color: "var(--text-head)" }}>{f.name}</span>
+                  {isStore && isPlayer && (
+                    <span style={{ fontSize: 10, color: "var(--accent)" }}>
+                      {f.locationClass} · {f.size}
+                    </span>
+                  )}
                   <span className={`tag tag-${isPlayer ? "gold" : "red"}`}>
                     {isPlayer ? "Yours" : "Rival"}
                   </span>
@@ -102,7 +132,7 @@ export default function RightPanel() {
         </>
       )}
 
-      {node.firmSlots > 0 && slotsRemaining > 0 && playerCorp && (
+      {(node.factorySlots > 0 || hasAnyStoreLocs) && playerCorp && (
         <>
           <hr />
           <div style={sectionStyle}>
@@ -118,6 +148,71 @@ export default function RightPanel() {
                 </button>
               ))}
             </div>
+
+            {buildType === "store" && (
+              <>
+                <div style={{ marginTop: 8 }}>
+                  <label style={labelStyle}>Select a location</label>
+                  {(["A", "B", "C"] as const).map((cls) => {
+                    const locsInClass = node.storeLocations.filter((l) => l.locationClass === cls);
+                    if (locsInClass.length === 0) return null;
+                    // Group free locations by size within this class
+                    const bySize: Partial<Record<"small" | "medium" | "large", { free: number; first: string | null }>> = {};
+                    for (const loc of locsInClass) {
+                      if (!bySize[loc.size]) bySize[loc.size] = { free: 0, first: null };
+                      if (loc.occupiedByFirmId === null) {
+                        bySize[loc.size]!.free++;
+                        if (!bySize[loc.size]!.first) bySize[loc.size]!.first = loc.id;
+                      }
+                    }
+                    return (
+                      <div key={cls} style={{ marginBottom: 4 }}>
+                        <div style={{ fontSize: 9, color: "var(--text-dim)", marginBottom: 2 }}>{cls}-class</div>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {(["large", "medium", "small"] as const).map((sz) => {
+                            const entry = bySize[sz];
+                            if (!entry) return null;
+                            const isSel = entry.first !== null && selectedLocationId === entry.first;
+                            const cost = entry.first
+                              ? GameConfig.storeSlots.locationClassCost[cls] + GameConfig.storeSlots.buildCostBySize[sz]
+                              : 0;
+                            return (
+                              <button
+                                key={sz}
+                                style={{
+                                  fontSize: 10, padding: "3px 8px",
+                                  borderColor: isSel ? "var(--accent)" : undefined,
+                                  opacity: entry.free === 0 ? 0.4 : 1,
+                                }}
+                                disabled={entry.free === 0}
+                                onClick={() => entry.first && setSelectedLocationId(entry.first)}
+                              >
+                                {sz}
+                                <div style={{ fontSize: 9, color: "var(--text-dim)" }}>
+                                  {entry.free} free · €{cost.toLocaleString()}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!selectedLoc && (
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>
+                      Pick a location above
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {buildType !== "store" && canBuildProduction === false && (
+              <div style={{ fontSize: 11, color: "var(--warn)", marginTop: 6 }}>
+                No production slots remaining.
+              </div>
+            )}
+
             <input
               style={{ width: "100%", marginTop: 6 }}
               placeholder="Firm name (optional)"
@@ -125,13 +220,29 @@ export default function RightPanel() {
               onChange={(e) => setBuildName(e.target.value)}
             />
             <div style={{ marginTop: 4, color: "var(--text-dim)", fontSize: 11 }}>
-              Cost: {euros({ farm: 15000, factory: 25000, store: 10000 }[buildType])}
+              {buildType === "store" && selectedLoc ? (
+                <>
+                  Location ({selectedLoc.locationClass}): {euros(GameConfig.storeSlots.locationClassCost[selectedLoc.locationClass])}
+                  {" + "}Size ({selectedLoc.size}): {euros(GameConfig.storeSlots.buildCostBySize[selectedLoc.size])}
+                  {" = "}
+                  <strong style={{ color: "var(--text)" }}>
+                    {euros(GameConfig.storeSlots.locationClassCost[selectedLoc.locationClass] + GameConfig.storeSlots.buildCostBySize[selectedLoc.size])}
+                  </strong> total
+                </>
+              ) : buildType !== "store" ? (
+                <>Cost: {euros({ farm: 15000, factory: 25000 }[buildType])}</>
+              ) : null}
               {" · "}Cash: {euros(playerCorp.cash)}
             </div>
             {buildError && (
               <div style={{ color: "var(--danger)", fontSize: 11, marginTop: 4 }}>{buildError}</div>
             )}
-            <button className="primary" style={{ marginTop: 8, width: "100%" }} onClick={handleBuild}>
+            <button
+              className="primary"
+              style={{ marginTop: 8, width: "100%" }}
+              disabled={buildType === "store" ? !canBuildStore : !canBuildProduction}
+              onClick={handleBuild}
+            >
               Build {buildType}
             </button>
           </div>
@@ -149,8 +260,7 @@ function FirmPanel({ firm }: { firm: Firm }) {
   const {
     gameState, buildInvestment, cancelInvestment,
     configureProductionLine, cancelPendingRecipeChange, markLineIntentionallyIdle,
-    markSectionIntentionallyIdle, toggleHarborAutoSource,
-    addContract, setRetailPrice, setSellToCompetitors,
+    addContract, setSellToCompetitors,
     setFirmTrainingIntensity, resetFirmTrainingIntensity,
   } = useGameStore();
   const [invError, setInvError] = useState<string | null>(null);
@@ -167,7 +277,10 @@ function FirmPanel({ firm }: { firm: Firm }) {
   );
 
   const availableInvestments = getAvailableInvestments(firm.type, gameState.barcodeAvailable);
-  const slotsLeft = GameConfig.firmInvestmentSlotLimit - firm.investments.length;
+  const slotLimit = firm.type === "store"
+    ? GameConfig.storeSlots.investmentSlotsBySize[firm.size]
+    : GameConfig.firmInvestmentSlotLimit;
+  const slotsLeft = slotLimit - firm.investments.length;
 
   function handleInvest(type: InvestmentType) {
     const err = buildInvestment(firm.id, type);
@@ -188,7 +301,7 @@ function FirmPanel({ firm }: { firm: Firm }) {
       </div>
       <hr />
       <div style={sectionStyle}>
-        <Row label="Investment slots" value={`${firm.investments.length} / ${GameConfig.firmInvestmentSlotLimit} used`} />
+        <Row label="Investment slots" value={`${firm.investments.length} / ${slotLimit} used`} />
       </div>
 
       {firm.investments.length > 0 && (
@@ -345,70 +458,7 @@ function FirmPanel({ firm }: { firm: Firm }) {
         </>
       )}
 
-      {/* Retail price controls (stores) */}
-      {firm.type === "store" && (() => {
-        const sellable = getSellableProducts(firm);
-        if (sellable.length === 0) return null;
-        const city = gameState?.cityNodes[firm.cityNodeId];
-        return (
-          <>
-            <hr />
-            <div style={sectionStyle}>
-              <h3>Retail prices</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
-                {sellable.map((product) => {
-                  const benchmark   = GameConfig.retailBenchmarkPrices[product as ProductId] ?? 0;
-                  const current     = firm.retailPrices[product as ProductId] ?? benchmark;
-                  const marketSize  = city ? estimatedDemand(city.population, product as ProductId, current) : 0;
-                  const rampProgress = firm.salesRampProgress[product as ProductId] ?? 0;
-                  const rampPct      = Math.round(computeRampFraction(rampProgress) * 100);
-                  return (
-                    <div key={product}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                        <span style={{ fontSize: 11, color: "var(--text)" }}>
-                          {displayName(product as ProductId)}
-                        </span>
-                        <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                          Market size: {qty(marketSize)} units
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 3 }}>
-                        Your store is currently reaching {rampPct}% of this market
-                      </div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <input
-                          type="number"
-                          style={{ flex: 1, fontSize: 11 }}
-                          value={current.toFixed(2)}
-                          step={0.1}
-                          min={0.01}
-                          onChange={(e) => {
-                            const v = parseFloat(e.target.value);
-                            if (!isNaN(v) && v > 0) setRetailPrice(firm.id, product as ProductId, v);
-                          }}
-                        />
-                        <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
-                          benchmark {euros(benchmark)}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </>
-        );
-      })()}
-
-      {firm.type === "store" ? (
-        <StoreHarborSourceSection
-          firm={firm}
-          gameState={gameState}
-          onToggle={(productId, enabled) => toggleHarborAutoSource(firm.id, productId, enabled)}
-          onSetRetailPrice={(productId, price) => setRetailPrice(firm.id, productId, price)}
-          onMarkSectionIdle={(invId) => markSectionIntentionallyIdle(firm.id, invId)}
-        />
-      ) : (
+      {firm.type !== "store" && (
         <HarborSourcingSection
           firm={firm}
           contractError={contractError}
@@ -624,13 +674,6 @@ const labelStyle: React.CSSProperties = {
   display: "block", fontSize: 11, color: "var(--text-dim)", marginBottom: 3,
 };
 
-function getSellableProducts(firm: Firm): string[] {
-  const has = (t: string) => firm.investments.some((i) => i.type === t && i.status === "complete");
-  const products: string[] = [];
-  if (has("grocery_section")) products.push("chicken", "chicken_soup", "ice_cream_strawberry");
-  if (has("electronics_section")) products.push("laptop_branded", "printer_branded");
-  return products;
-}
 
 // ------------------------------------------------------------------
 // Helpers
@@ -670,6 +713,8 @@ const INVESTMENT_LABELS: Record<InvestmentType, string> = {
   pharmacy_section:      "Pharmacy section",
   warehouse_capacity:    "Warehouse capacity",
   training_store:        "Training program",
+  grocery_section_expansion:     "Grocery expansion",
+  electronics_section_expansion: "Electronics expansion",
 };
 
 function getAvailableInvestments(
@@ -782,105 +827,6 @@ function ProductionLineConfig({
   );
 }
 
-// ------------------------------------------------------------------
-// Store harbor auto-source section (Fix 7)
-// ------------------------------------------------------------------
-
-const SECTION_FOR_PRODUCT: Partial<Record<ProductId, string>> = {
-  chicken:              "grocery_section",
-  chicken_soup:         "grocery_section",
-  ice_cream_strawberry: "grocery_section",
-  laptop_branded:       "electronics_section",
-  printer_branded:      "electronics_section",
-};
-
-function StoreHarborSourceSection({
-  firm, gameState, onToggle, onSetRetailPrice, onMarkSectionIdle,
-}: {
-  firm: Firm;
-  gameState: import("../../types").GameState;
-  onToggle: (productId: ProductId, enabled: boolean) => void;
-  onSetRetailPrice: (productId: ProductId, price: number) => void;
-  onMarkSectionIdle: (invId: string) => void;
-}) {
-  const sellable    = getStoreSellableProducts(firm);
-  const harborItems = sellable.filter((p) => isSoldByHarbor(p));
-  if (harborItems.length === 0) return null;
-
-  const city = gameState.cityNodes[firm.cityNodeId];
-
-  return (
-    <>
-      <hr />
-      <div style={sectionStyle}>
-        <h3>Harbor sourcing</h3>
-        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>
-          Toggle auto-buy. The game purchases estimated demand each turn at spot price.
-        </div>
-        {harborItems.map((productId) => {
-          const enabled     = firm.harborAutoSource[productId] ?? false;
-          const harborPrice = (gameState.harborNode.prices as Record<string, number>)[productId] ?? getBasePrice(productId);
-          const spotPrice   = harborPrice * (1 + GameConfig.spotPurchasePremium);
-          const retailPrice = firm.retailPrices[productId] ?? GameConfig.retailBenchmarkPrices[productId] ?? 0;
-          const estDemand   = city ? estimatedDemand(city.population, productId, retailPrice) : 0;
-          const estCostPerTurn = estDemand * spotPrice;
-
-          // Find the section investment that covers this product (for idle marking)
-          const sectionType = SECTION_FOR_PRODUCT[productId];
-          const sectionInv  = sectionType
-            ? firm.investments.find((i) => i.type === sectionType && i.status === "complete")
-            : undefined;
-
-          return (
-            <div key={productId} style={{ marginBottom: 12, borderLeft: `2px solid ${enabled ? "var(--accent)" : "var(--border)"}`, paddingLeft: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontWeight: 600, fontSize: 12 }}>{displayName(productId)}</span>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    onChange={(e) => onToggle(productId, e.target.checked)}
-                  />
-                  {enabled ? "Auto-buying" : "Off"}
-                </label>
-              </div>
-              {sectionInv && !sectionInv.intentionallyIdle && !enabled && (
-                <button
-                  style={{ fontSize: 10, padding: "1px 6px", color: "var(--text-dim)", marginBottom: 4 }}
-                  onClick={() => onMarkSectionIdle(sectionInv.id)}
-                >
-                  Mark section as intentionally idle
-                </button>
-              )}
-              <div style={{ fontSize: 11, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 2 }}>
-                <span>Spot price: <strong style={{ color: "var(--text-head)" }}>{euros(spotPrice)}/u</strong></span>
-                <span>Market size: <strong style={{ color: "var(--text-head)" }}>{qty(estDemand)} units/turn</strong></span>
-                {enabled && <span style={{ color: "var(--warn)" }}>Est. cost: ~{euros(estCostPerTurn)}/turn</span>}
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <label style={{ fontSize: 10, color: "var(--text-dim)" }}>Retail price</label>
-                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
-                  <input
-                    type="number"
-                    style={{ flex: 1, fontSize: 11 }}
-                    value={retailPrice.toFixed(2)}
-                    step={0.1}
-                    min={0.01}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      if (!isNaN(v) && v > 0) onSetRetailPrice(productId, v);
-                    }}
-                  />
-                  <span style={{ fontSize: 10, color: "var(--text-dim)" }}>benchmark {euros(GameConfig.retailBenchmarkPrices[productId] ?? 0)}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
 
 const panelStyle: React.CSSProperties = {
   height: "100%",

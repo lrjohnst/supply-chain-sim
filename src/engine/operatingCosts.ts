@@ -1,7 +1,53 @@
-import type { GameState, Firm, ProductId } from "../types";
+import type { GameState, Firm, ProductId, InvestmentType } from "../types";
 import { GameConfig } from "../config/gameConfig";
 import { postTransaction } from "./ledger";
 import { requireCash, eliminateCorporation } from "./bankruptcy";
+
+/**
+ * Employee headcount for a store firm: sum of (baseEmployeesPerSection × sizeMultiplier)
+ * across all completed section investments. Minimum 1. Non-store firms return 1
+ * (the field is unused for them).
+ */
+export function computeEmployeeCount(firm: Firm): number {
+  if (firm.type !== "store") return 1;
+  const cfg = GameConfig.storeTraining;
+  const sizeMult = cfg.sizeEmployeeMultiplier[firm.size] ?? 1;
+  const total = firm.investments
+    .filter((i) => i.status === "complete" && cfg.baseEmployeesPerSection[i.type as InvestmentType] !== undefined)
+    .reduce((sum, i) => sum + (cfg.baseEmployeesPerSection[i.type as InvestmentType]! * sizeMult), 0);
+  return Math.max(1, Math.round(total));
+}
+
+/**
+ * Advance firm.trainedFraction toward the slider target (trainingIntensity)
+ * for every store firm. Called once per turn, after training cost deduction.
+ *
+ * trainedFraction is intentionally decoupled from trainingIntensity: moving
+ * the slider only changes the target and the cost; trainedFraction itself
+ * only moves here, gradually, never directly from player input.
+ */
+export function updateTrainedFraction(state: GameState): void {
+  const cfg = GameConfig.storeTraining;
+
+  for (const firm of Object.values(state.firms)) {
+    if (firm.type !== "store") continue;
+
+    firm.employeeCount = computeEmployeeCount(firm);
+
+    const sliderFraction = firm.trainingIntensity / 100;
+    let delta: number;
+
+    if (sliderFraction >= cfg.tippingPoint) {
+      const multiplier = (sliderFraction - cfg.tippingPoint) / (1.0 - cfg.tippingPoint);
+      delta = cfg.maxGrowthPerTurn * multiplier;
+    } else {
+      const multiplier = (cfg.tippingPoint - sliderFraction) / cfg.tippingPoint;
+      delta = -cfg.maxDecayPerTurn * multiplier;
+    }
+
+    firm.trainedFraction = Math.min(1, Math.max(0, firm.trainedFraction + delta));
+  }
+}
 
 /** Flat overhead for every firm, regardless of investments or activity. */
 export function firmBaseOverhead(firm: Firm): number {
@@ -62,7 +108,6 @@ export function deductOperatingCosts(state: GameState): void {
           eliminateCorporation(state, corp.id);
           break;
         }
-        corp.cash -= overhead;
         postTransaction({
           state,
           turn:          state.turn,
@@ -153,7 +198,6 @@ export function deductOperatingCosts(state: GameState): void {
         eliminateCorporation(state, corp.id);
         break;
       }
-      corp.cash -= trainingCost;
       postTransaction({
         state,
         turn:          state.turn,
@@ -170,7 +214,43 @@ export function deductOperatingCosts(state: GameState): void {
 
     if (corp.eliminated) continue;
 
-    // ---- 5: Marketing budget (discretionary) ----
+    // ---- 5: Per-firm staff wages (store firms with at least one complete section) ----
+    for (const firmId of corp.firmIds) {
+      if (corp.eliminated) break;
+      const firm = state.firms[firmId];
+      if (firm.type !== "store") continue;
+      const hasSection = firm.investments.some((i) => i.status === "complete" &&
+        GameConfig.storeTraining.baseEmployeesPerSection[i.type as InvestmentType] !== undefined);
+      if (!hasSection) continue;
+      const wages = firm.employeeCount * GameConfig.storeTraining.wagePerEmployeePerTurn;
+      if (wages <= 0) continue;
+
+      if (corp.isPlayer) {
+        requireCash(corp, wages, `Staff wages — ${firm.name}`);
+      } else if (corp.cash < wages) {
+        state.pendingNotifications.push(
+          `Your competitor ${corp.name} has gone bankrupt and been eliminated from the game.`
+        );
+        eliminateCorporation(state, corp.id);
+        break;
+      }
+      postTransaction({
+        state,
+        turn:          state.turn,
+        firmId:        firm.id,
+        corporationId: corp.id,
+        category:      "staff_cost",
+        counterparty:  "Staff wages",
+        product:       null,
+        quantity:      null,
+        unitPrice:     null,
+        total:         -wages,
+      });
+    }
+
+    if (corp.eliminated) continue;
+
+    // ---- 7: Marketing budget (discretionary) ----
     if (corp.marketingBudgetPerTurn > 0) {
       if (corp.isPlayer) {
         requireCash(corp, corp.marketingBudgetPerTurn, "Marketing budget");

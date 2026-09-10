@@ -9,9 +9,9 @@ import { evaluateTenders, processRenewals } from "./tenders";
 import { runHarborSpotPurchases } from "./harborSpotPurchase";
 import { runRetailSales } from "./retail";
 import { processLoans } from "./loans";
-import { deductOperatingCosts, updateQuality } from "./operatingCosts";
+import { deductOperatingCosts, updateQuality, updateTrainedFraction } from "./operatingCosts";
 import { runAI } from "./ai";
-import { tickCities } from "./city";
+import { tickPopulation, tickWealth } from "./city";
 import { checkWinCondition } from "./winCondition";
 import { BankruptcyError, estimateTurnsToBankruptcy, type BankruptcyReason } from "./bankruptcy";
 import { appendSnapshot } from "./history";
@@ -51,6 +51,7 @@ export interface TickResult {
  *  8.  Run retail (B2C) sales
  *  8.  Process loans                     ← bankruptcy check
  *  9.  Deduct operating costs            ← bankruptcy check
+ *  9b. Update store trainedFraction (toward trainingIntensity target)
  *  10. Update firm quality
  *  11. Estimate turns-to-bankruptcy (early warning, no side effects)
  *  12. Run AI decisions
@@ -80,10 +81,12 @@ export function tick(state: GameState): TickResult {
     processRenewals(state);
     evaluateTenders(state);
     runHarborSpotPurchases(state);
-    tickCities(state);
+    tickPopulation(state);
+    tickWealth(state);
     retailData = runRetailSales(state);
     processLoans(state);
     deductOperatingCosts(state);
+    updateTrainedFraction(state);
   } catch (e) {
     if (e instanceof BankruptcyError) {
       state.phase = "lost";
@@ -142,6 +145,12 @@ export function tick(state: GameState): TickResult {
 
   // Step 15: record economic snapshot before incrementing turn
   appendSnapshot(state, harborData, retailData);
+
+  // Record per-city history for full-game charts (populationHistory[i] = population at end of turn i)
+  for (const city of Object.values(state.cityNodes)) {
+    city.populationHistory.push(city.population);
+    city.wealthHistory.push(city.wealthIndex);
+  }
 
   state.turn += 1;
 

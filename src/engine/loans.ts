@@ -1,6 +1,5 @@
-import type { GameState, Loan } from "../types";
+import type { GameState } from "../types";
 import { GameConfig } from "../config/gameConfig";
-import { generateId } from "./utils";
 import { postTransaction } from "./ledger";
 import { requireCash, eliminateCorporation } from "./bankruptcy";
 
@@ -16,41 +15,49 @@ export function computeTotalAssets(state: GameState, corporationId: string): num
   return assets;
 }
 
-/** Accrue interest and process quarterly loan payments. */
+/** Maximum outstanding balance the corporation may carry. */
+export function getCreditLimit(state: GameState, corporationId: string): number {
+  const cfg = GameConfig.loans;
+  const totalAssets = computeTotalAssets(state, corporationId);
+  return Math.max(totalAssets, cfg.minAssetFloorForLoan) * cfg.leverageRatioOnAssets;
+}
+
+/** Returns the single revolving credit facility for a corporation, or null if not initialised. */
+export function getCreditFacility(state: GameState, corporationId: string) {
+  const corp = state.corporations[corporationId];
+  if (!corp || corp.loanIds.length === 0) return null;
+  return state.loans[corp.loanIds[0]] ?? null;
+}
+
+/**
+ * Each turn: update the facility rate from the current base rate, then
+ * accrue interest on the outstanding balance. Interest is posted to the
+ * ledger and deducted from corporation cash. Inability to pay triggers
+ * bankruptcy (player) or elimination (AI).
+ */
 export function processLoans(state: GameState): void {
   for (const loan of Object.values(state.loans)) {
+    // Sync rate to current macro rate (revolving credit is always variable)
+    loan.annualInterestRate = state.currentBaseInterestRate;
+
     if (loan.outstandingBalance <= 0) continue;
 
-    const quartersPerYear = GameConfig.game.quartersPerYear;
-    const quarterlyRate = loan.annualInterestRate / quartersPerYear;
-    const turnsRemaining = loan.durationTurns - (state.turn - loan.turnTaken);
-
-    // Recalculate payment each turn from current rate + remaining balance + remaining turns.
-    // This makes existing loans variable-rate: a rate shock immediately changes the payment.
-    const quarterlyPayment =
-      turnsRemaining > 0
-        ? quarterlyRate > 0
-          ? (loan.outstandingBalance * quarterlyRate) /
-            (1 - Math.pow(1 + quarterlyRate, -turnsRemaining))
-          : loan.outstandingBalance / turnsRemaining
-        : loan.outstandingBalance; // final turn: repay remainder in full
-
+    const quarterlyRate = loan.annualInterestRate / GameConfig.game.quartersPerYear;
     const interest = loan.outstandingBalance * quarterlyRate;
-    const principal = quarterlyPayment - interest;
-    const principalRepaid = Math.min(Math.max(principal, 0), loan.outstandingBalance);
-    const totalDue = interest + principalRepaid;
+    if (interest <= 0) continue;
 
     const corp = state.corporations[loan.corporationId];
     if (!corp || corp.eliminated) continue;
 
     if (corp.isPlayer) {
-      requireCash(corp, totalDue, `Loan repayment (€${Math.round(interest).toLocaleString()} interest + €${Math.round(principalRepaid).toLocaleString()} principal)`);
-    } else if (corp.cash < totalDue) {
+      requireCash(corp, interest, `Credit facility interest (${(loan.annualInterestRate * 100).toFixed(1)}% p.a. on ${Math.round(loan.outstandingBalance).toLocaleString()})`);
+    } else if (corp.cash < interest) {
       eliminateCorporation(state, corp.id);
       continue;
     }
 
-    // Post interest expense
+    corp.cash -= interest;
+
     postTransaction({
       state,
       turn: state.turn,
@@ -63,79 +70,90 @@ export function processLoans(state: GameState): void {
       unitPrice: null,
       total: -interest,
     });
-
-    // Post principal repayment
-
-    if (principalRepaid > 0) {
-      loan.outstandingBalance -= principalRepaid;
-
-      postTransaction({
-        state,
-        turn: state.turn,
-        firmId: null,
-        corporationId: loan.corporationId,
-        category: "loan_repayment",
-        counterparty: "Bank",
-        product: null,
-        quantity: null,
-        unitPrice: null,
-        total: -principalRepaid,
-      });
-    }
-
-    // Close out and remove the loan when balance is negligible
-    if (loan.outstandingBalance < 0.01) {
-      loan.outstandingBalance = 0;
-      delete state.loans[loan.id];
-      const loanCorp = state.corporations[loan.corporationId];
-      if (loanCorp) loanCorp.loanIds = loanCorp.loanIds.filter((id) => id !== loan.id);
-    }
   }
 }
 
-/** Take out a new loan. Returns error string or null on success. */
-export function takeLoan(
+/**
+ * Draw from the revolving credit facility.
+ * Validates against the credit limit; adds to outstanding balance and cash.
+ */
+export function drawCredit(
   state: GameState,
   corporationId: string,
-  principal: number,
-  durationTurns: number
+  amount: number,
 ): string | null {
+  if (amount <= 0) return "Draw amount must be positive.";
+
+  const facility = getCreditFacility(state, corporationId);
+  if (!facility) return "No credit facility found.";
+
+  const limit = getCreditLimit(state, corporationId);
+  const available = limit - facility.outstandingBalance;
+  if (amount > available + 0.01) {
+    return `Cannot draw €${Math.round(amount).toLocaleString()} — available credit is €${Math.round(available).toLocaleString()}.`;
+  }
+
   const corp = state.corporations[corporationId];
-  const cfg = GameConfig.loans;
+  facility.outstandingBalance += amount;
+  facility.principal += amount;
+  corp.cash += amount;
 
-  if (durationTurns < cfg.minDurationTurns || durationTurns > cfg.maxDurationTurns) {
-    return `Loan duration must be between ${cfg.minDurationTurns} and ${cfg.maxDurationTurns} turns.`;
-  }
-
-  const totalAssets = computeTotalAssets(state, corporationId);
-  const maxLoan = Math.max(totalAssets, cfg.minAssetFloorForLoan) * cfg.leverageRatioOnAssets;
-  if (principal > maxLoan) {
-    return `Maximum loan amount is €${Math.round(maxLoan).toLocaleString()} (${cfg.leverageRatioOnAssets}× total assets).`;
-  }
-
-  const currentRate = state.currentBaseInterestRate;
-  const quarterlyRate = currentRate / GameConfig.game.quartersPerYear;
-
-  // Fixed payment annuity formula
-  const quarterlyPayment =
-    quarterlyRate > 0
-      ? (principal * quarterlyRate) / (1 - Math.pow(1 + quarterlyRate, -durationTurns))
-      : principal / durationTurns;
-
-  const loan: Loan = {
-    id: generateId(),
+  postTransaction({
+    state,
+    turn: state.turn,
+    firmId: null,
     corporationId,
-    principal,
-    outstandingBalance: principal,
-    annualInterestRate: currentRate,
-    quarterlyPayment: +quarterlyPayment.toFixed(2),
-    turnTaken: state.turn,
-    durationTurns,
-  };
+    category: "loan_draw",
+    counterparty: "Bank",
+    product: null,
+    quantity: null,
+    unitPrice: null,
+    total: amount,
+  });
 
-  state.loans[loan.id] = loan;
-  corp.loanIds.push(loan.id);
-  corp.cash += principal;
+  return null;
+}
+
+/**
+ * Repay any portion of the outstanding credit balance.
+ * Validates against available cash and outstanding balance.
+ */
+export function repayCredit(
+  state: GameState,
+  corporationId: string,
+  amount: number,
+): string | null {
+  if (amount <= 0) return "Repayment amount must be positive.";
+
+  const facility = getCreditFacility(state, corporationId);
+  if (!facility) return "No credit facility found.";
+
+  if (facility.outstandingBalance <= 0) return "Nothing to repay.";
+
+  const maxRepay = Math.min(facility.outstandingBalance, state.corporations[corporationId].cash);
+  if (amount > maxRepay + 0.01) {
+    return `Cannot repay €${Math.round(amount).toLocaleString()} — maximum is €${Math.round(maxRepay).toLocaleString()}.`;
+  }
+
+  const repaid = Math.min(amount, facility.outstandingBalance);
+  const corp = state.corporations[corporationId];
+  facility.outstandingBalance -= repaid;
+  corp.cash -= repaid;
+
+  if (facility.outstandingBalance < 0.01) facility.outstandingBalance = 0;
+
+  postTransaction({
+    state,
+    turn: state.turn,
+    firmId: null,
+    corporationId,
+    category: "loan_repayment",
+    counterparty: "Bank",
+    product: null,
+    quantity: null,
+    unitPrice: null,
+    total: -repaid,
+  });
 
   return null;
 }

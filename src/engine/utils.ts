@@ -110,7 +110,7 @@ export function inventoryQuantity(
 export function linksToHarbor(state: GameState, cityNodeId: string): number {
   const start = state.cityNodes[cityNodeId];
   if (!start) return 0;
-  if (start.hasHarborAccess) return 0;
+  if (start.type === "harbor" || start.type === "port") return 0;
 
   // Build adjacency map
   const adj: Record<string, string[]> = {};
@@ -129,7 +129,7 @@ export function linksToHarbor(state: GameState, cityNodeId: string): number {
   while (queue.length > 0) {
     const { id, dist } = queue.shift()!;
     const node = state.cityNodes[id];
-    if (node?.hasHarborAccess && id !== cityNodeId) return dist;
+    if ((node?.type === "harbor" || node?.type === "port") && id !== cityNodeId) return dist;
     for (const neighbour of (adj[id] ?? [])) {
       if (!visited.has(neighbour)) {
         visited.add(neighbour);
