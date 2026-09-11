@@ -1,11 +1,56 @@
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useMemo } from "react";
+import { Delaunay } from "d3-delaunay";
 import { useGameStore } from "../../store/gameStore";
-import type { Firm } from "../../types";
+import type { Firm, ZoneChar } from "../../types";
 
 const MAP_W = 1000;
 const MAP_H = 700;
 const FIRM_R = 8;
 const FIRM_ORBIT = 46;
+
+// ------------------------------------------------------------------
+// Terrain layer
+//
+// A Voronoi diagram over the existing node positions, drawn underneath the
+// links. This is purely cosmetic: it reads node.position and node.zone and
+// changes nothing about generation or topology. Its job is to give the empty
+// space a body, so the map reads as land-and-sea rather than as a graph on a
+// void, and so link lengths have something to be measured against.
+//
+// Water is NOT produced by the Voronoi — a Voronoi has no concept of a coast
+// and would happily hand a port a landlocked cell. It is an explicit rect
+// behind the land, and the land is clipped to a smaller box so the difference
+// between the two shows as sea on every side. Ports are pushed into the
+// portEdgeMargin band of the canvas edge during generation, so they land in
+// that coastal strip.
+// ------------------------------------------------------------------
+
+/** Breathing room between the outermost node and the coastline, in map units. */
+const LAND_MARGIN = 55;
+/** How far the sea extends beyond the coastline. */
+const WATER_MARGIN = 340;
+
+/**
+ * Muted terrain tones, one per zone character. All are darker than ROAD_COLOR
+ * below so roads stay legible on top, and darker than every node fill so the
+ * cities keep their figure-ground separation.
+ */
+const ZONE_FILL: Record<ZoneChar, string> = {
+  metropolitan: "#272c3b",  // slate violet — built-up
+  industrial:   "#302a26",  // warm brown-grey — works and yards
+  rural:        "#232c22",  // dark olive — farmland
+  coastal:      "#1d2c30",  // dark teal — estuary and dune
+};
+
+const WATER_FILL     = "#0a1017";  // a shade below --bg, so the coastline reads
+const COASTLINE      = "#33485e";
+
+/**
+ * Road stroke. The previous value was --border (#2a3347), chosen against a plain
+ * black background; over terrain it disappeared completely. --text-dim is the
+ * palette's existing "legible but recessive" tone and clears every ZONE_FILL.
+ */
+const ROAD_COLOR = "#6b7a94";
 
 // Radius scales logarithmically with population: 7px at 15k → 32px at 950k
 const LOG_POP_MIN = Math.log10(15_000);
@@ -19,6 +64,44 @@ export default function NodeMap() {
   const { gameState, selectedNodeId, selectedFirmId, selectNode, selectFirm, openStoreFirm, openCityScreen,
           mapTransform: view, setMapTransform: setView } = useGameStore();
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Terrain geometry. Node positions never change after generation, so this is
+  // computed once per game and memoised on the node record identity.
+  const terrain = useMemo(() => {
+    const nodes = Object.values(gameState?.cityNodes ?? {});
+    if (nodes.length < 3) return null;   // Delaunay is degenerate below 3 points
+
+    const xs = nodes.map((n) => n.position.x);
+    const ys = nodes.map((n) => n.position.y);
+    const land = {
+      x0: Math.min(...xs) - LAND_MARGIN,
+      y0: Math.min(...ys) - LAND_MARGIN,
+      x1: Math.max(...xs) + LAND_MARGIN,
+      y1: Math.max(...ys) + LAND_MARGIN,
+    };
+
+    const delaunay = Delaunay.from(nodes, (n) => n.position.x, (n) => n.position.y);
+    // Clipping the Voronoi to the land box is what stops the outermost cells —
+    // the ports, by construction — from running off to infinity.
+    const voronoi = delaunay.voronoi([land.x0, land.y0, land.x1, land.y1]);
+
+    const cells = nodes.map((n, i) => ({
+      id: n.id,
+      zone: n.zone,
+      d: voronoi.renderCell(i),
+    })).filter((c) => c.d);
+
+    return {
+      cells,
+      land,
+      water: {
+        x0: land.x0 - WATER_MARGIN,
+        y0: land.y0 - WATER_MARGIN,
+        w:  land.x1 - land.x0 + WATER_MARGIN * 2,
+        h:  land.y1 - land.y0 + WATER_MARGIN * 2,
+      },
+    };
+  }, [gameState?.cityNodes]);
 
   // Pan/zoom state lives in the store so it survives city screen open/close
   const dragging = useRef(false);
@@ -98,6 +181,37 @@ export default function NodeMap() {
 
       <g transform={`translate(${view.x},${view.y}) scale(${view.scale})`}>
 
+        {/* Terrain — sea, then land cells, then coastline. Below everything else. */}
+        {terrain && (
+          <g className="terrain" pointerEvents="none">
+            <rect
+              x={terrain.water.x0} y={terrain.water.y0}
+              width={terrain.water.w} height={terrain.water.h}
+              fill={WATER_FILL}
+            />
+            {/* Each cell is stroked in its own fill so adjacent same-zone cells
+                merge into one landmass instead of showing antialiasing seams. */}
+            {terrain.cells.map((cell) => (
+              <path
+                key={cell.id}
+                d={cell.d}
+                fill={ZONE_FILL[cell.zone]}
+                stroke={ZONE_FILL[cell.zone]}
+                strokeWidth={1}
+              />
+            ))}
+            <rect
+              x={terrain.land.x0} y={terrain.land.y0}
+              width={terrain.land.x1 - terrain.land.x0}
+              height={terrain.land.y1 - terrain.land.y0}
+              fill="none"
+              stroke={COASTLINE}
+              strokeWidth={1.5}
+              opacity={0.7}
+            />
+          </g>
+        )}
+
         {/* Links */}
         {Object.values(mapLinks).map((link) => {
           const from = cityNodes[link.fromNodeId];
@@ -110,10 +224,10 @@ export default function NodeMap() {
               key={link.id}
               x1={from.position.x} y1={from.position.y}
               x2={to.position.x}   y2={to.position.y}
-              stroke={isHighway ? "#c87a1a" : "#2a3347"}
+              stroke={isHighway ? "#c87a1a" : ROAD_COLOR}
               strokeWidth={isHighway ? 3 : 1 + link.investmentLevel}
               strokeLinecap="round"
-              opacity={isHighway ? 0.85 : 1}
+              opacity={isHighway ? 0.85 : 0.75}
             />
           );
         })}

@@ -1,4 +1,4 @@
-import type { GameState, CityNode, MapLink, StoreLocation, MapConfig } from "../types";
+import type { GameState, CityNode, MapLink, StoreLocation, MapConfig, ZoneChar } from "../types";
 import { GameConfig, defaultMapConfig } from "../config/gameConfig";
 import { generateId } from "./utils";
 import { clamp } from "./utils";
@@ -77,8 +77,6 @@ function makeStoreLocsForPop(
 // ------------------------------------------------------------------
 // Zone character types and weights
 // ------------------------------------------------------------------
-
-type ZoneChar = "metropolitan" | "industrial" | "rural" | "coastal";
 
 const ZONE_WEIGHTS: Record<MapConfig["mapType"], Record<ZoneChar, number>> = {
   trading:    { metropolitan: 30, industrial: 20, rural: 25, coastal: 25 },
@@ -297,6 +295,7 @@ export function buildCityNodes(
       id: nodeId,
       name,
       type,
+      zone,
       population: pop,
       factorySlots,
       energyCostMultiplier: 1.0,
@@ -397,11 +396,6 @@ export function buildCityNodes(
     );
   }
 
-  // Development verification: log centre zones so buildMapLinks can confirm zone reconstruction is in sync.
-  // Remove this log once zone reconstruction has been verified correct.
-  console.log("[MAP-VERIFY] buildCityNodes centre zones:", centres.map((c, i) => `${i}:${c.zone}`).join(", "));
-  console.log("[MAP-VERIFY] buildCityNodes node zones:", nodes.map((n) => `${n.id}:${centres[(n as CityNode & { _centreIdx: number })._centreIdx].zone}`).join(", "));
-
   // Strip internal _centreIdx before returning
   const result: Record<string, CityNode> = {};
   for (const node of nodes) {
@@ -416,12 +410,18 @@ export function buildCityNodes(
 // buildMapLinks — procedural link generator (RNG independent of nodes)
 // ------------------------------------------------------------------
 
+/**
+ * Build the road and highway network over an already-generated set of city nodes.
+ *
+ * Deterministic and RNG-free: every decision is a function of node positions,
+ * populations and `node.zone`. The former `seed` parameter was removed when the
+ * buildCityNodes Step 1 replay was dropped — this function no longer draws.
+ */
 export function buildMapLinks(
   cityNodes: Record<string, CityNode>,
-  seed = 12345,
   config: MapConfig = defaultMapConfig
 ): Record<string, MapLink> {
-  const { connectivity, minimumDegree, infrastructure, canvasWidth, canvasHeight, highwayMaxDistance, mapType, difficulty } = config;
+  const { connectivity, minimumDegree, infrastructure, canvasWidth, canvasHeight, highwayMaxDistance } = config;
 
   const SCALE_FACTOR = 800 / Math.sqrt(canvasWidth ** 2 + canvasHeight ** 2);
 
@@ -464,53 +464,13 @@ export function buildMapLinks(
     pendingLinks.push({ from: fromId, to: toId, isHighway });
   }
 
-  // --- Centre + zone reconstruction ---
-  // Replay buildCityNodes Step 1 exactly (same seed, same RNG type) to recover
-  // region centres with their zone characters. This lets us use per-zone thresholds
-  // for intra-zone link generation.
-  const seedRng = makeSeededRNG(seed);
-  const regionCount = clamp(Math.round(nodeCount / 10), 4, 6);
-  const margin = 80;
-  const minCentreGap = canvasWidth * 0.25;
-
-  const centres: { x: number; y: number; zone: ZoneChar }[] = [];
-  for (let i = 0; i < regionCount; i++) {
-    let pos = { x: 0, y: 0 };
-    let attempts = 0;
-    let gap = minCentreGap;
-    while (attempts < 200) {
-      pos = {
-        x: margin + seedRng.next() * (canvasWidth  - margin * 2),
-        y: margin + seedRng.next() * (canvasHeight - margin * 2),
-      };
-      const tooClose = centres.some((c) => euclidean(c, pos) < gap);
-      if (!tooClose) break;
-      attempts++;
-      if (attempts % 50 === 0) gap *= 0.80;
-    }
-    // Mirror the drawZoneChar call that buildCityNodes makes — advances seedRng by 1 pick
-    const zone = drawZoneChar(seedRng, mapType, difficulty);
-    centres.push({ ...pos, zone });
-  }
-
-  // Verification log — compare with buildCityNodes output for the same seed.
-  // Remove this log once zone reconstruction has been verified correct.
-  console.log("[MAP-VERIFY] buildMapLinks centre zones:", centres.map((c, i) => `${i}:${c.zone}`).join(", "));
-
-  // Assign each node to its nearest centre (Voronoi)
-  const nodeZone = new Map<string, ZoneChar>();
-  for (const node of nodes) {
-    let nearest = 0;
-    let nearestDist = Infinity;
-    for (let c = 0; c < centres.length; c++) {
-      const d = euclidean(node.position, centres[c]);
-      if (d < nearestDist) { nearestDist = d; nearest = c; }
-    }
-    nodeZone.set(node.id, centres[nearest].zone);
-  }
-
-  // Verification log — compare with buildCityNodes node zones for the same seed.
-  console.log("[MAP-VERIFY] buildMapLinks node zones:", nodes.map((n) => `${n.id}:${nodeZone.get(n.id)}`).join(", "));
+  // --- Zone lookup ---
+  // Zones are carried on the nodes themselves (set once in buildCityNodes), so
+  // there is nothing to reconstruct here. This used to replay buildCityNodes
+  // Step 1 against a fresh RNG to recover region centres; that coupling meant any
+  // change to the number or order of RNG draws in Step 1 silently corrupted the
+  // link thresholds. Reading node.zone removes the trap entirely.
+  const nodeZone = new Map<string, ZoneChar>(nodes.map((n) => [n.id, n.zone]));
 
   // --- Step 1: Intra-zone connections with per-zone thresholds ---
   // Rural stays sparse; metro is denser. All thresholds must exceed the 90px

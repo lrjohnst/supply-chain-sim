@@ -13,9 +13,11 @@ buildCityNodes(mapSeed, mapConfig)   → Record<string, CityNode>
 buildMapLinks(nodes, mapSeed, mapConfig) → Record<string, MapLink>
 ```
 
-Both use `makeSeededRNG` (mulberry32). `buildCityNodes` and `buildMapLinks` each start a **fresh RNG from the same seed**, so `buildMapLinks` can replay Step 1 of `buildCityNodes` to reconstruct region centres and their zone characters. This replay is exact only if both call `drawZoneChar` the same number of times in the same order — if you add or remove an RNG draw in `buildCityNodes` Step 1, you must mirror it in `buildMapLinks`.
+Only `buildCityNodes` draws. It uses `makeSeededRNG` (mulberry32); `buildMapLinks` is deterministic but **RNG-free** — every decision is a function of node positions, populations and `node.zone`.
 
-`[MAP-VERIFY]` console logs in both functions print centre zones and per-node zones so the replay can be checked. Centre zones match exactly; a handful of boundary nodes may differ because `buildMapLinks` assigns nodes to zones by Voronoi nearest-centre while `buildCityNodes` uses the exact `_centreIdx`. This divergence is accepted and only affects link thresholds at zone borders.
+> **Changed 2026-09-11.** `buildMapLinks` used to take a `seed` and replay Step 1 of `buildCityNodes` against a fresh RNG to recover region centres and their zone characters. That replay was exact only if both functions called `drawZoneChar` the same number of times in the same order, so any added or removed RNG draw in Step 1 silently corrupted the link thresholds — with no error, just a subtly wrong map. The zone is now written onto `CityNode.zone` at construction and read directly. The `seed` parameter is gone; the signature is `buildMapLinks(cityNodes, config)`. The four `[MAP-VERIFY]` logs that existed to check the replay are removed with it.
+>
+> This is a small behaviour change, not a pure refactor. The replay assigned nodes to zones by Voronoi nearest-centre, while `buildCityNodes` knows the exact `_centreIdx`, so a handful of boundary nodes previously got the wrong zone and therefore the wrong link threshold. Measured over five seeds: highway counts identical, forced-connectivity edges 49 → 47, and one seed gained two roads (62 → 64 links). The new numbers are the correct ones.
 
 ---
 
@@ -29,6 +31,8 @@ Both use `makeSeededRNG` (mulberry32). `buildCityNodes` and `buildMapLinks` each
 6. **Derived economics** — `geoCeiling`, `baseGrowthRate`, `baseWealthRate` (see [city.md](city.md)).
 
 **Node type**: every generated node is `"city"`, except ports which are `"port"`. `"town"` was removed from `NodeType`; `"airport"` remains reserved and unused.
+
+**`zone`**: every node carries the `ZoneChar` of the region centre it was scattered around. Set once in Step 4, never mutated. Read by `buildMapLinks` for link thresholds and by `NodeMap` for terrain colouring — see [../../rendering.md](../../rendering.md).
 
 **`factorySlots`** is derived from population only:
 
@@ -44,6 +48,8 @@ Ports use the same formula — there is no port-specific override.
 ---
 
 ### buildMapLinks
+
+**Step 0 — Zone lookup.** `nodeZone` is built straight from `node.zone`. Nothing is reconstructed.
 
 **Step 1 — Intra/cross-zone roads.** Every node pair within a distance threshold gets a road. Base threshold is the average of both endpoints' zone thresholds:
 
@@ -134,7 +140,8 @@ Defined in `types/index.ts`, defaults in `gameConfig.ts`.
 
 ### Open questions
 
-- Grid/tile map rendering — see [handoff.md](../handoff.md); roadmap already lists "full hex grid world map with ocean links between countries".
+- Grid/tile map rendering — see [handoff.md](../handoff.md); roadmap already lists "full hex grid world map with ocean links between countries". A Voronoi terrain layer now stands in for this visually without touching generation; see [rendering.md](../../rendering.md).
+- **Forced-connectivity edges run high.** Across five seeds at the default config the BFS fallback fires 9–11 times on a 50-node map — roughly one node in five cannot reach the graph organically. Per the note on Step 5 that indicates thresholds are tight relative to node spacing. Unresolved; it is likely the same root cause as the "dead space between clusters" complaint about the rendered map.
 - Highway density is currently implicit in `infrastructure`; no direct "how many highways" knob.
 - `getTransportCost` ignores `distance` and link capacity entirely.
 - `"airport"` node type is declared but never generated.

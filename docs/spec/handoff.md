@@ -1,6 +1,6 @@
 # Handoff — current state and open threads
 
-*Last updated: 2026-09-10*
+*Last updated: 2026-09-11*
 
 Read this first when picking up work. [known-gaps.md](known-gaps.md) describes the MVP 1.0 era and is **not** current.
 
@@ -14,7 +14,7 @@ The game is live at **https://supply-chain-sim.lucasjohnston.nl**, served as a s
 behind Nginx on srv6. No backend — it is entirely client-side. See [../deployment.md](../deployment.md)
 for the rebuild procedure and why it runs `npx vite build` rather than `npm run build`.
 
-**Note:** `tsc -b` currently fails with 40 errors on `main`, so `npm run build` does not complete.
+**Note:** `tsc -b` currently fails with 31 errors on `main`, so `npm run build` does not complete.
 `ReadmeClaude.md` asks for a clean typecheck before committing; that is not the case at `acf2df3`.
 Logged as item 1 in [../../BACKLOG.md](../../BACKLOG.md).
 
@@ -69,16 +69,34 @@ Two contributing factors were identified:
 
 ## Known traps
 
-- **RNG replay coupling.** `buildMapLinks` replays `buildCityNodes` Step 1 to recover zone characters. Any change to the number or order of RNG draws in that step breaks it silently. `[MAP-VERIFY]` logs exist to check; they are development-only and safe to delete once you stop touching generation.
+- ~~**RNG replay coupling.**~~ **Gone as of 2026-09-11.** `buildMapLinks` no longer replays `buildCityNodes` Step 1 — the zone is carried on `CityNode.zone` and read directly. `buildMapLinks` takes no seed and draws no RNG. The `[MAP-VERIFY]` logs are removed. You can now add or reorder RNG draws in Step 1 freely.
 - **Pixel units.** `highwayMaxDistance` (300) and `networkPopRadiusPx` (300) are canvas pixels, not km. Changing canvas size changes their meaning. `highwayMaxDistance: 120` produced almost no highways at the default canvas.
 - **Threshold floor.** Zone connection thresholds must exceed the 90px minimum node separation or nodes can never connect organically and everything falls through to forced BFS edges.
 - **networkFactor coupling.** The CityScreen Remote/Connected/Highly-connected cut points (1.0 / 1.55) are calibrated against the current scoring weights. Changing `networkScale`, the 15% second-order weight, or any `networkPop*` value invalidates them.
 
 ---
 
+## What was done instead, 2026-09-11
+
+Rather than decide the grid question, a **Voronoi terrain layer** was added to `NodeMap` —
+land tinted by zone character, explicit sea, coastline, ports reading as coastal. It gives
+the map a body without touching generation, and it makes the existing zone system visible
+for the first time. See [../rendering.md](../rendering.md).
+
+This does not answer the grid question; it buys time to answer it against a map that has a
+body. Re-evaluate B vs C now that the terrain exists — it is possible neither is needed.
+
 ## Suggested next steps
 
-1. **Answer the grid question** — readability or feel. Decides Option B vs C.
-2. If proceeding: add terrain assignment to `buildCityNodes` and a tile layer to `NodeMap`, keeping the link topology untouched.
-3. Remove `[MAP-VERIFY]` logs once generation stabilises.
+1. **Look at the map again** with terrain on, then answer the grid question — readability or
+   feel — if it still matters.
+2. **Forced-connectivity edges run high**: 9–11 per 50-node map across five seeds, i.e. about
+   one node in five cannot reach the graph organically. `map.md` Step 5 says that means
+   thresholds are tight for the node spacing. This is a plausible root cause of the
+   "clusters with dead space between them" complaint, and it is a generation question, not a
+   rendering one.
+3. **World scale is not expressible.** `SCALE_FACTOR = 800 / hypot(canvasWidth, canvasHeight)`
+   — the 800 is a literal, so canvas size changes pixel density but never the world's size in
+   km. It is always 800 km on the diagonal, ≈301,000 km² at the default aspect. Making this a
+   `MapConfig` field is a prerequisite for any tile map, because a tile needs a size in km.
 4. Refresh [known-gaps.md](known-gaps.md), which still describes MVP 1.0.

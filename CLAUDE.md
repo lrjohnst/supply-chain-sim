@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Start here:** [docs/spec/handoff.md](docs/spec/handoff.md) — current state, what was last worked on, open design questions. Read before picking up work.
 
-Open work is tracked in [BACKLOG.md](BACKLOG.md). The game is deployed at https://supply-chain-sim.lucasjohnston.nl; see [docs/deployment.md](docs/deployment.md).
+Open work is tracked in [BACKLOG.md](BACKLOG.md). Map rendering — the terrain layer, its palette and its constraints — is documented in [docs/rendering.md](docs/rendering.md). The game is deployed at https://supply-chain-sim.lucasjohnston.nl; see [docs/deployment.md](docs/deployment.md).
 
 Read the relevant engine spec file before touching any engine module. Read [docs/spec/design-principles.md](docs/spec/design-principles.md) before any feature work or UI/UX decisions.
 

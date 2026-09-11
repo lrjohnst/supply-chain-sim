@@ -18,7 +18,7 @@ export function newGame(playerName: string, mapConfig: MapConfig = defaultMapCon
 
   const mapSeed = Math.floor(Math.random() * 2 ** 32);
   const cityNodes = buildCityNodes(mapSeed, mapConfig);
-  const mapLinks = buildMapLinks(cityNodes, mapSeed, mapConfig);
+  const mapLinks = buildMapLinks(cityNodes, mapConfig);
 
   const playerCorpId = generateId();
   const aiCorpId = generateId();

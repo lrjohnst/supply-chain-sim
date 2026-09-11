@@ -69,6 +69,15 @@ export type FirmType = "farm" | "factory" | "store" | "mine";
 
 export type NodeType = "city" | "harbor" | "port" | "airport";
 
+/**
+ * Geographic character of the region a city belongs to. Drawn once per region
+ * centre in buildCityNodes and then carried on every node in that region.
+ *
+ * Drives: starting wealthIndex, population dealing order, link thresholds in
+ * buildMapLinks, and the terrain colouring in NodeMap.
+ */
+export type ZoneChar = "metropolitan" | "industrial" | "rural" | "coastal";
+
 // ============================================================
 // Map configuration (player-configurable in a future UI)
 // ============================================================
@@ -141,6 +150,12 @@ export interface CityNode {
   id: EntityId;
   name: string;
   type: NodeType;
+  /**
+   * Region character, inherited from the region centre this node was scattered
+   * around. Set once by buildCityNodes and never mutated. buildMapLinks reads it
+   * for per-zone link thresholds; NodeMap reads it to colour the terrain.
+   */
+  zone: ZoneChar;
   /** Current population. Updated each turn by tickPopulation(). */
   population: number;
   /** Slots for production firms (factories, farms, mines). Stores use storeSlots instead. */

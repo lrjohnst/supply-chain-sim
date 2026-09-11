@@ -1,5 +1,46 @@
 # Changelog
 
+## Niet uitgebracht — terreinlaag op de kaart (2026-09-11)
+
+### Toegevoegd
+- **Voronoi-terreinlaag in `NodeMap`.** Land per stad, ingekleurd naar zonekarakter, met
+  expliciete zee en een kustlijn eronder. Eigen `<g className="terrain">` als eerste kind van
+  de bestaande pan/zoom-transformgroep, dus onder links en nodes, en `pointerEvents="none"`.
+  Gememoïseerd op `gameState.cityNodes`. Nieuwe dependency: `d3-delaunay` (+19 kB raw, +7 kB gzip).
+- **`CityNode.zone`** — het zonekarakter wordt nu op de node bewaard. `ZoneChar` is verhuisd
+  naar `types/index.ts` en geëxporteerd. Zonder dit kon de renderer er niet bij: het type was
+  privé, `_centreIdx` werd gestript en `mapSeed` staat niet op `GameState`, dus de zone was op
+  runtime onherroepelijk weg.
+- `docs/rendering.md` — waarom de laag er is, hoe hij is opgebouwd, palet en bekende grenzen.
+
+### Gewijzigd
+- **`buildMapLinks` replayt `buildCityNodes` Step 1 niet meer** en leest `node.zone`. De
+  `seed`-parameter is vervallen: `buildMapLinks(cityNodes, config)`. De functie doet nu
+  helemaal geen RNG-trekkingen. Daarmee is de stilste val in de codebase weg — een toegevoegde
+  of verplaatste RNG-draw in Step 1 corrumpeerde voorheen de linkdrempels zonder één foutmelding.
+- **Kleine gedragswijziging, geen pure refactor.** De replay wees grensnodes via Voronoi aan het
+  dichtstbijzijnde regiocentrum toe; `buildCityNodes` kent de exacte `_centreIdx`. Een handvol
+  nodes kreeg dus de verkeerde zone en daarmee de verkeerde drempel. Gemeten over vijf seeds:
+  snelwegen identiek, geforceerde connectiviteitsranden 49 → 47, en één seed kreeg er twee wegen
+  bij (62 → 64 links). De nieuwe getallen zijn de juiste.
+- **Wegkleur** van `#2a3347` (`--border`) naar `#6b7a94` (`--text-dim`) op 0.75 opacity. De oude
+  kleur was gekozen tegen een vrijwel zwarte achtergrond en verdween volledig onder elke landtint.
+  Snelwegen (`#c87a1a`) ongewijzigd.
+
+### Verwijderd
+- De vier `[MAP-VERIFY]`-logs. Die bestonden uitsluitend om de replay te controleren.
+
+### Geverifieerd
+- `tsc -b` geeft exact dezelfde 31 fouten als vóór de wijziging, met een identieke verdeling per
+  bestand — geen nieuwe fouten, en de aangeraakte bestanden zijn schoon.
+- Headless gerenderd in jsdom: 50 terreincellen in drie zonekleuren, zee- en kustrect aanwezig,
+  terrein is kind #0 van de transformgroep, 35 wegen in de nieuwe kleur, 17 snelwegen,
+  3 havenankers, nul consolefouten.
+
+### Niet gedaan (bewust)
+- Viewport, fit-to-view en touch-handlers blijven ongemoeid. Dit is een pure renderwijziging.
+
+
 ## Niet uitgebracht — deploy en projectdocumentatie (2026-09-10)
 
 Geen wijzigingen aan de game-code; alleen infrastructuur en documentatie.

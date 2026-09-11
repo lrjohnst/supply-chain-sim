@@ -33,7 +33,7 @@ build is meteen zichtbaar zonder cache-gedoe.
 
 ## Waarom `npx vite build` en niet `npm run build`
 
-`npm run build` is `tsc -b && vite build`, en die typecheck faalt momenteel met 40 fouten op `main`
+`npm run build` is `tsc -b && vite build`, en die typecheck faalt momenteel met 31 fouten op `main`
 (zie **BACKLOG.md**, item 1). `vite build` gebruikt esbuild, dat types wegstript zonder ze te
 controleren — de bundle klopt, de typecheck is alleen nog niet schoon.
 
