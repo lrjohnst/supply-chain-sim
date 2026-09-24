@@ -1,6 +1,9 @@
 # Deployment — srv6
 
 Sinds 2026-09-10 draait het spel op **https://supply-chain-sim.lucasjohnston.nl**.
+Sinds 2026-09-24 draait daarnaast de **World Builder** op
+**https://world.supply-chain-sim.lucasjohnston.nl** — tweede Vite-entry uit dezelfde build,
+zelfde `dist/`, eigen vhost en certificaat. Zie [world-builder.md](world-builder.md).
 
 Het is een puur client-side SPA: geen backend, geen database, geen `.env`. De hele game-state
 leeft in de browser. Deployen is dus niets meer dan "bouwen en de `dist/` serveren".
@@ -11,7 +14,8 @@ leeft in de browser. Deployen is dus niets meer dan "bouwen en de `dist/` server
 |---|---|
 | Repo op de server | `/var/www/supply-chain-sim.lucasjohnston.nl` (eigenaar `www-data:www-data`, mode 2775) |
 | Document root | `/var/www/supply-chain-sim.lucasjohnston.nl/dist` |
-| Nginx vhost | `/etc/nginx/sites-available/supply-chain-sim.lucasjohnston.nl` |
+| Nginx vhost (game) | `/etc/nginx/sites-available/supply-chain-sim.lucasjohnston.nl` → `index.html` |
+| Nginx vhost (builder) | `/etc/nginx/sites-available/world.supply-chain-sim.lucasjohnston.nl` → `world.html` |
 | Certificaat | Let's Encrypt, auto-renewal via Certbot |
 | Logs | `/var/log/nginx/supply-chain-sim.{access,error}.log` |
 
@@ -27,7 +31,8 @@ sudo -u www-data npm ci          # alleen nodig als package-lock.json wijzigde
 sudo -u www-data npx vite build
 ```
 
-Nginx hoeft niet herladen te worden; het serveert de bestanden direct van schijf. De asset-namen
+Eén build levert beide apps: `dist/index.html` (game) en `dist/world.html` (builder), met
+gedeelde asset-chunks. Nginx hoeft niet herladen te worden; het serveert de bestanden direct van schijf. De asset-namen
 zijn gehasht en `index.html` wordt met `Cache-Control: no-cache` uitgeserveerd, dus een nieuwe
 build is meteen zichtbaar zonder cache-gedoe.
 

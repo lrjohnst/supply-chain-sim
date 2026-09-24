@@ -1,5 +1,6 @@
 import type { GameState, CityNode, MapLink, StoreLocation, MapConfig, ZoneChar } from "../types";
 import { GameConfig, defaultMapConfig } from "../config/gameConfig";
+import { defaultWorldParams, type WorldParams } from "../config/worldParams";
 import { generateId } from "./utils";
 import { clamp } from "./utils";
 
@@ -78,20 +79,16 @@ function makeStoreLocsForPop(
 // Zone character types and weights
 // ------------------------------------------------------------------
 
-const ZONE_WEIGHTS: Record<MapConfig["mapType"], Record<ZoneChar, number>> = {
-  trading:    { metropolitan: 30, industrial: 20, rural: 25, coastal: 25 },
-  industrial: { metropolitan: 20, industrial: 40, rural: 25, coastal: 15 },
-  frontier:   { metropolitan: 10, industrial: 15, rural: 50, coastal: 25 },
-};
-
 function drawZoneChar(
   rng: ReturnType<typeof makeSeededRNG>,
   mapType: MapConfig["mapType"],
-  difficulty: MapConfig["difficulty"]
+  difficulty: MapConfig["difficulty"],
+  wp: WorldParams
 ): ZoneChar {
-  const w = { ...ZONE_WEIGHTS[mapType] };
-  if (difficulty === "easy") { w.metropolitan += 10; w.rural -= 10; }
-  if (difficulty === "hard") { w.metropolitan -= 10; w.rural += 10; }
+  const w = { ...wp.zoneWeights[mapType] };
+  const shift = wp.difficultyZoneShift;
+  if (difficulty === "easy") { w.metropolitan += shift; w.rural -= shift; }
+  if (difficulty === "hard") { w.metropolitan -= shift; w.rural += shift; }
   const total = w.metropolitan + w.industrial + w.rural + w.coastal;
   let r = rng.pick() * total;
   if ((r -= w.metropolitan) < 0) return "metropolitan";
@@ -104,13 +101,13 @@ function drawZoneChar(
 // wealthIndex starting value per zone character
 // ------------------------------------------------------------------
 
-function drawWealthIndex(rng: ReturnType<typeof makeSeededRNG>, zone: ZoneChar): number {
-  switch (zone) {
-    case "metropolitan": return clamp(rng.normal(0.55, 0.10), 0.35, 0.80);
-    case "coastal":      return clamp(rng.normal(0.50, 0.10), 0.30, 0.75);
-    case "industrial":   return clamp(rng.normal(0.40, 0.10), 0.20, 0.65);
-    case "rural":        return clamp(rng.normal(0.30, 0.10), 0.10, 0.55);
-  }
+function drawWealthIndex(
+  rng: ReturnType<typeof makeSeededRNG>,
+  zone: ZoneChar,
+  wp: WorldParams
+): number {
+  const w = wp.wealthByZone[zone];
+  return clamp(rng.normal(w.mean, w.std), w.min, w.max);
 }
 
 // ------------------------------------------------------------------
@@ -150,19 +147,15 @@ function shuffleNames(rng: ReturnType<typeof makeSeededRNG>): string[] {
 // POP_MU=11.2, POP_SIGMA=0.85 → median ~73k, range roughly 15k–950k
 // ------------------------------------------------------------------
 
-const POP_MU    = 11.2;
-const POP_SIGMA = 0.85;
-const POP_MIN   = 15_000;
-const POP_MAX   = 950_000;
-
 function drawPopulations(
   rng: ReturnType<typeof makeSeededRNG>,
-  count: number
+  count: number,
+  wp: WorldParams
 ): number[] {
   const pops: number[] = [];
   for (let i = 0; i < count; i++) {
-    const raw = Math.round(rng.lognormal(POP_MU, POP_SIGMA));
-    pops.push(clamp(raw, POP_MIN, POP_MAX));
+    const raw = Math.round(rng.lognormal(wp.popMu, wp.popSigma));
+    pops.push(clamp(raw, wp.popMin, wp.popMax));
   }
   return pops;
 }
@@ -173,7 +166,8 @@ function drawPopulations(
 
 export function buildCityNodes(
   seed = 12345,
-  config: MapConfig = defaultMapConfig
+  config: MapConfig = defaultMapConfig,
+  wp: WorldParams = defaultWorldParams
 ): Record<string, CityNode> {
   const rng = makeSeededRNG(seed);
   const cfg = GameConfig.cityLife;
@@ -181,16 +175,18 @@ export function buildCityNodes(
           canvasWidth, canvasHeight, portEdgeMargin } = config;
 
   // --- Step 1: Region centres ---
-  const regionCount = clamp(Math.round(nodeCount / 10), 4, 6);
-  const minCentreGap = canvasWidth * 0.25;
-  const margin = 80;
+  const regionCount = clamp(
+    Math.round(nodeCount / wp.nodesPerRegion), wp.regionCountMin, wp.regionCountMax
+  );
+  const minCentreGap = canvasWidth * wp.centreGapFactor;
+  const margin = wp.centreMargin;
 
   const centres: { x: number; y: number; zone: ZoneChar }[] = [];
   for (let i = 0; i < regionCount; i++) {
     let pos = { x: 0, y: 0 };
     let attempts = 0;
     let gap = minCentreGap;
-    while (attempts < 200) {
+    while (attempts < wp.centreMaxAttempts) {
       pos = {
         x: margin + rng.pick() * (canvasWidth  - margin * 2),
         y: margin + rng.pick() * (canvasHeight - margin * 2),
@@ -198,13 +194,13 @@ export function buildCityNodes(
       const tooClose = centres.some((c) => euclidean(c, pos) < gap);
       if (!tooClose) break;
       attempts++;
-      if (attempts % 50 === 0) gap *= 0.80;
+      if (attempts % wp.centreGapRelaxEvery === 0) gap *= wp.centreGapRelaxFactor;
     }
-    centres.push({ ...pos, zone: drawZoneChar(rng, mapType, difficulty) });
+    centres.push({ ...pos, zone: drawZoneChar(rng, mapType, difficulty, wp) });
   }
 
   // --- Step 2: Draw all populations, sort descending ---
-  const allPops = drawPopulations(rng, nodeCount).sort((a, b) => b - a);
+  const allPops = drawPopulations(rng, nodeCount, wp).sort((a, b) => b - a);
 
   // Assign populations to zones: metropolitan gets highest, rural gets lowest.
   // Build ordered assignment: metro > coastal > industrial > rural
@@ -229,7 +225,7 @@ export function buildCityNodes(
   for (const cIdx of orderedCentreIndices) {
     const slots = slotsPerCentre[cIdx];
     for (let s = 0; s < slots; s++) {
-      nodeAssignments.push({ centreIdx: cIdx, pop: allPops[popPtr++] ?? POP_MIN });
+      nodeAssignments.push({ centreIdx: cIdx, pop: allPops[popPtr++] ?? wp.popMin });
     }
   }
 
@@ -238,8 +234,8 @@ export function buildCityNodes(
   let nameIdx = 0;
 
   // --- Step 4: Place nodes with Gaussian scatter ---
-  const sigma = canvasWidth / (regionCount * 2);
-  const PADDING = 60;
+  const sigma = canvasWidth / (regionCount * wp.scatterSigmaFactor);
+  const PADDING = wp.nodePadding;
   const placed: { x: number; y: number }[] = [];
 
   // --- Step 5: Collect port slots (coastal zones preferred) ---
@@ -255,15 +251,15 @@ export function buildCityNodes(
     const centre = centres[centreIdx];
     let pos = { x: 0, y: 0 };
     let attempts = 0;
-    while (attempts < 50) {
+    while (attempts < wp.placementMaxAttempts) {
       pos = {
         x: clamp(centre.x + rng.normal(0, sigma), PADDING, canvasWidth  - PADDING),
         y: clamp(centre.y + rng.normal(0, sigma), PADDING, canvasHeight - PADDING),
       };
-      const tooClose = placed.some((p) => euclidean(p, pos) < 90);
+      const tooClose = placed.some((p) => euclidean(p, pos) < wp.minNodeSeparation);
       if (!tooClose) break;
       attempts++;
-      if (attempts === 50) {
+      if (attempts === wp.placementMaxAttempts) {
         // Shift outward from nearest neighbour
         const nearest = placed.reduce((best, p) =>
           euclidean(p, pos) < euclidean(best, pos) ? p : best, placed[0] ?? pos
@@ -272,8 +268,8 @@ export function buildCityNodes(
         const dy = pos.y - nearest.y || 1;
         const len = Math.sqrt(dx * dx + dy * dy) || 1;
         pos = {
-          x: clamp(nearest.x + (dx / len) * 95, PADDING, canvasWidth  - PADDING),
-          y: clamp(nearest.y + (dy / len) * 95, PADDING, canvasHeight - PADDING),
+          x: clamp(nearest.x + (dx / len) * wp.placementPushDistance, PADDING, canvasWidth  - PADDING),
+          y: clamp(nearest.y + (dy / len) * wp.placementPushDistance, PADDING, canvasHeight - PADDING),
         };
       }
     }
@@ -286,7 +282,7 @@ export function buildCityNodes(
       : pop >= 60_000  ? 3
       : 2;
 
-    const wealthIndex = drawWealthIndex(rng, zone);
+    const wealthIndex = drawWealthIndex(rng, zone, wp);
     const storeLocations = makeStoreLocsForPop(pop, rng);
     const name = names[nameIdx++] ?? `Node-${nodes.length}`;
     const nodeId = `node_${nodes.length}`;
@@ -383,8 +379,11 @@ export function buildCityNodes(
 
   // --- Step 7: Compute geoCeiling / baseGrowthRate / baseWealthRate ---
   for (const node of nodes) {
-    const sizeFactor = clamp(8.0 - Math.log10(node.population) * 1.4, 1.05, 3.5);
-    const territoryFactor = rng.lognormal(0.75, 0.25);
+    const sizeFactor = clamp(
+      wp.geoCeilingBase - Math.log10(node.population) * wp.geoCeilingSlope,
+      wp.geoCeilingFactorMin, wp.geoCeilingFactorMax
+    );
+    const territoryFactor = rng.lognormal(wp.territoryMu, wp.territorySigma);
     node.geoCeiling = Math.round(node.population * sizeFactor * territoryFactor);
     node.baseGrowthRate = clamp(
       rng.normal(cfg.baseGrowthRateMean, cfg.baseGrowthRateStd),
@@ -419,25 +418,21 @@ export function buildCityNodes(
  */
 export function buildMapLinks(
   cityNodes: Record<string, CityNode>,
-  config: MapConfig = defaultMapConfig
+  config: MapConfig = defaultMapConfig,
+  wp: WorldParams = defaultWorldParams
 ): Record<string, MapLink> {
   const { connectivity, minimumDegree, infrastructure, canvasWidth, canvasHeight, highwayMaxDistance } = config;
 
-  const SCALE_FACTOR = 800 / Math.sqrt(canvasWidth ** 2 + canvasHeight ** 2);
+  // worldDiagonalKm — not the canvas size — is what sets the world's real extent.
+  const SCALE_FACTOR = wp.worldDiagonalKm / Math.sqrt(canvasWidth ** 2 + canvasHeight ** 2);
 
   // intraZone: multiplier on same-zone link thresholds
   // crossZone: multiplier on cross-zone link thresholds (lower = zones stay more separate)
-  const CONNECTIVITY_FACTORS: Record<MapConfig["connectivity"], { intraZone: number; crossZone: number }> = {
-    isolated: { intraZone: 0.50, crossZone: 0.30 },
-    sparse:   { intraZone: 0.75, crossZone: 0.60 },
-    normal:   { intraZone: 1.00, crossZone: 1.00 },
-    dense:    { intraZone: 1.35, crossZone: 1.30 },
-  };
-  const { intraZone: intraFactor, crossZone: crossFactor } = CONNECTIVITY_FACTORS[connectivity];
+  const { intraZone: intraFactor, crossZone: crossFactor } = wp.connectivityFactors[connectivity];
 
   // "advanced" infrastructure gets a wider MST reach
   const effectiveHighwayMaxDistance = infrastructure === "advanced"
-    ? highwayMaxDistance * 1.3
+    ? highwayMaxDistance * wp.highwayAdvancedReachMultiplier
     : highwayMaxDistance;
 
   const nodes = Object.values(cityNodes);
@@ -475,20 +470,13 @@ export function buildMapLinks(
   // --- Step 1: Intra-zone connections with per-zone thresholds ---
   // Rural stays sparse; metro is denser. All thresholds must exceed the 90px
   // minimum node separation so organic connections can actually form.
-  const ZONE_THRESHOLDS: Record<ZoneChar, number> = {
-    metropolitan: 200,
-    industrial:   160,
-    coastal:      140,
-    rural:        110,
-  };
-
   for (let i = 0; i < nodeCount; i++) {
     for (let j = i + 1; j < nodeCount; j++) {
       const a = nodes[i];
       const b = nodes[j];
       const zA = nodeZone.get(a.id)!;
       const zB = nodeZone.get(b.id)!;
-      const baseThreshold = (ZONE_THRESHOLDS[zA] + ZONE_THRESHOLDS[zB]) / 2;
+      const baseThreshold = (wp.zoneThresholds[zA] + wp.zoneThresholds[zB]) / 2;
       // Same-zone pairs use intraFactor; cross-zone pairs use crossFactor.
       // "isolated" keeps zones largely separate; "dense" integrates them freely.
       const factor = zA === zB ? intraFactor : crossFactor;
@@ -509,14 +497,14 @@ export function buildMapLinks(
       // Highways only between the top ~8% of cities by population (min 3).
       highwayCandidates = [...nodes]
         .sort((a, b) => b.population - a.population)
-        .slice(0, Math.max(3, Math.round(nodes.length * 0.08)));
+        .slice(0, Math.max(wp.highwayBasicMinimum, Math.round(nodes.length * wp.highwayBasicFraction)));
       break;
     case "developed":
-      highwayCandidates = nodes.filter((n) => n.population >= 80_000);
+      highwayCandidates = nodes.filter((n) => n.population >= wp.highwayDevelopedMinPop);
       break;
     case "advanced":
       // More cities qualify; effectiveHighwayMaxDistance is already widened above.
-      highwayCandidates = nodes.filter((n) => n.population >= 40_000);
+      highwayCandidates = nodes.filter((n) => n.population >= wp.highwayAdvancedMinPop);
       break;
   }
 
@@ -664,7 +652,7 @@ export function buildMapLinks(
     if (!fromNode || !toNode) continue;
     const id = generateId();
     const rawKm = euclidean(fromNode.position, toNode.position) * SCALE_FACTOR;
-    const distKm = clamp(Math.round(rawKm), 20, 100);
+    const distKm = clamp(Math.round(rawKm), wp.linkDistanceMinKm, wp.linkDistanceMaxKm);
     links[id] = {
       id,
       fromNodeId: from,

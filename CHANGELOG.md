@@ -1,5 +1,52 @@
 # Changelog
 
+## Niet uitgebracht — World Builder (2026-09-24)
+
+Tweede applicatie in deze repo: **https://world.supply-chain-sim.lucasjohnston.nl**. Een
+interactieve tuning-tool voor wereldgeneratie. Zelfde codebase, tweede Vite-entry — dat is
+bewust: de hele waarde zit in "tune hier, exporteer, pas toe in de game", en dat werkt alleen
+als beide exact dezelfde generator draaien.
+
+### Toegevoegd
+- `src/config/worldParams.ts` — **elk wereldvormend getal dat voorheen een literal in `map.ts` was**.
+  Populatieverdeling, aantal en spreiding van regio's, clusterdichtheid, minimale stadsafstand,
+  zonegewichten, startwelvaart per zone, geoCeiling-vorm, verbindingsdrempels,
+  connectiviteitsfactoren, snelweg-drempels, de wereldiagonaal en de linklengte-clamp.
+- `src/world/` — de builder: `worldModel.ts` (generatie, stappen, statistiek), `WorldMap.tsx`,
+  `WorldBuilder.tsx`, `controls.tsx`, eigen CSS. Plus `world.html` als tweede entry.
+- `src/components/map/terrain.ts` — terreingeometrie en palet, nu gedeeld door `NodeMap` en de
+  builder, zodat game en tool niet visueel uit elkaar lopen.
+- Statistiekbalk met waarschuwingen op de getallen die problemen verraden: forced edges,
+  links die op de lengte-clamp vastzitten, dead ends, geïsoleerde steden.
+- Export/import van de volledige spec als JSON (`{formatVersion, seed, map, world}`).
+
+### Gewijzigd
+- `buildCityNodes` en `buildMapLinks` nemen een derde argument `wp: WorldParams`, met
+  `defaultWorldParams` als default. **Gedrag is bit-identiek**: geverifieerd door de volledige
+  gegenereerde wereld te hashen — posities tot negen decimalen, populaties, zones, welvaart,
+  plafonds, groeivoeten en de complete linkset — over vier presets × vijf seeds, vóór en ná.
+  Alle twintig hashes gelijk.
+- `vite.config.ts` bouwt nu twee entries. Rollup hijst de gedeelde engine in een gemeenschappelijke
+  chunk: de builder laadt ~258 kB, de game ~760 kB (was één bundle van 759 kB).
+- `NodeMap` gebruikt de gedeelde `terrain.ts` in plaats van eigen kopieën.
+
+### Determinisme
+`tickPopulation` en `tickWealth` trekken uit `Math.random`, dus stappen is in de game
+niet-deterministisch. Voor een tuning-tool is dat waardeloos — je kunt het effect van een
+parameter dan niet van ruis onderscheiden. `worldModel.ts` zet daarom voor de duur van elke stap
+een seeded generator neer en herstelt die in een `finally`. Bewust een wrapper en géén
+engine-wijziging: de engine draait exact de code die de game draait. Geverifieerd: naar stap 61,
+resetten, opnieuw naar 61 — identieke populatie tot op de eenheid.
+
+### Geverifieerd
+- `tsc -b`: dezelfde 31 bestaande fouten, identieke verdeling per bestand. Nieuwe bestanden schoon.
+- Builder headless gedraaid: 50 terreincellen, stappen 0→1→11→61, exacte reset, determinisme
+  bevestigd, presets gedragen zich logisch (European 99 links / graad 3,96 / 0 dead ends;
+  Frontier 49 links / 0 snelwegen / 20 dead ends), export-JSON geldig. Nul consolefouten.
+- Game headless hergedraaid als regressietest: terrein nog steeds kind #0, 50 cellen,
+  wegen in de nieuwe kleur, nul fouten.
+
+
 ## Niet uitgebracht — terreinlaag op de kaart (2026-09-11)
 
 ### Toegevoegd

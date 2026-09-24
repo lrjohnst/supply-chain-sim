@@ -92,6 +92,27 @@ Only edges within the effective reach are eligible. When no candidate is reachab
 
 ---
 
+### WorldParams
+
+Every world-shaping number that used to be a literal inside this file now lives in
+`config/worldParams.ts` as `WorldParams`, and both generator functions take it as a third
+argument defaulting to `defaultWorldParams`. That covers the population distribution,
+region count and separation, scatter tightness, minimum node separation, zone weights,
+starting wealth per zone, geoCeiling shape, zone connection thresholds, connectivity
+factors, highway eligibility, the world diagonal and the link-length clamp.
+
+The defaults are the former literals, value for value — verified by hashing the full
+generated world across four presets and five seeds before and after the extraction; all
+twenty hashes matched. Re-run that check if you change a default.
+
+This is what the [World Builder](../../world-builder.md) drives.
+
+> `worldDiagonalKm` (default 800) is what sets the world's real size. `canvasWidth` and
+> `canvasHeight` only change pixel density: `SCALE_FACTOR = worldDiagonalKm / hypot(w, h)`,
+> so the diagonal is always `worldDiagonalKm` km no matter the canvas. Note also that a
+> larger canvas spreads nodes over more pixels while the pixel-based thresholds stay put,
+> so canvas size quietly acts as a connectivity knob.
+
 ### MapConfig
 
 Defined in `types/index.ts`, defaults in `gameConfig.ts`.

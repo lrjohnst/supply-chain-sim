@@ -1,6 +1,6 @@
 # Handoff — current state and open threads
 
-*Last updated: 2026-09-11*
+*Last updated: 2026-09-24*
 
 Read this first when picking up work. [known-gaps.md](known-gaps.md) describes the MVP 1.0 era and is **not** current.
 
@@ -85,6 +85,19 @@ for the first time. See [../rendering.md](../rendering.md).
 
 This does not answer the grid question; it buys time to answer it against a map that has a
 body. Re-evaluate B vs C now that the terrain exists — it is possible neither is needed.
+
+## World Builder, 2026-09-24
+
+There is now a second app in this repo: **https://world.supply-chain-sim.lucasjohnston.nl**,
+built from `world.html`. It drives the game's own generator with every parameter exposed —
+including the ones that used to be literals in `map.ts` and are now `WorldParams` in
+`config/worldParams.ts`. Regenerate, step 1/10/50 turns, reset, export the spec as JSON.
+
+Use it before changing generation by hand. The intended loop is: tune there until the world
+reads right, export, apply. See [../world-builder.md](../world-builder.md).
+
+Its statistics bar already answers two of the open questions below empirically — the forced-edge
+count and how many links are pinned to the length clamp.
 
 ## Suggested next steps
 

@@ -1,0 +1,114 @@
+/* World builder — its own shell, reusing the game's palette from index.css. */
+
+.wb { display: flex; flex-direction: column; height: 100vh; background: var(--bg); color: var(--text); }
+
+.wb-topbar {
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  padding: 10px 18px; background: var(--bg-panel); border-bottom: 1px solid var(--border);
+}
+.wb-brand h1 { margin: 0; font-size: 17px; color: var(--text-head); letter-spacing: .2px; }
+.wb-brand span { font-size: 11px; color: var(--text-dim); }
+.wb-seedbox, .wb-steps { display: flex; align-items: center; gap: 8px; }
+.wb-seedbox label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+.wb-seedbox input { width: 130px; }
+.wb-steps { margin-left: auto; }
+.wb-stepcount { font-size: 12px; color: var(--text-dim); margin-right: 4px; }
+.wb-stepcount strong { color: var(--gold); font-size: 15px; }
+
+.wb button {
+  background: var(--bg-card); color: var(--text); border: 1px solid var(--border);
+  border-radius: 5px; padding: 5px 11px; font-size: 12px; cursor: pointer;
+}
+.wb button:hover:not(:disabled) { background: var(--bg-hover); }
+.wb button:disabled { opacity: .4; cursor: default; }
+.wb button.wb-primary { background: var(--blue-dim); border-color: var(--blue); color: #e8edf5; }
+.wb button.wb-wide { width: 100%; margin-top: 8px; }
+
+.wb input[type="number"], .wb select, .wb textarea {
+  background: var(--bg-card); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px; padding: 4px 7px; font-size: 12px;
+}
+.wb input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+.wb-body { display: flex; flex: 1; min-height: 0; }
+
+/* ---- parameter panel ---- */
+.wb-panel {
+  width: 330px; flex-shrink: 0; overflow-y: auto;
+  background: var(--bg-panel); border-right: 1px solid var(--border); padding-bottom: 40px;
+}
+.wb-panel-head { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+
+.wb-section { border-bottom: 1px solid var(--border); }
+.wb-section-head {
+  display: flex; align-items: baseline; gap: 7px; width: 100%;
+  background: none !important; border: none !important; border-radius: 0 !important;
+  padding: 9px 14px !important; text-align: left;
+}
+.wb-caret { color: var(--text-dim); font-size: 10px; }
+.wb-section-title { font-size: 12px; font-weight: 600; color: var(--text-head); }
+.wb-section-sub { font-size: 10px; color: var(--text-dim); margin-left: auto; }
+.wb-section-body { padding: 4px 14px 14px; }
+
+.wb-field { display: block; margin-bottom: 13px; }
+.wb-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text); margin-bottom: 4px; }
+.wb-label output { color: var(--gold); font-variant-numeric: tabular-nums; }
+.wb-field input[type="number"], .wb-field select { width: 100%; }
+.wb-hint { display: block; font-size: 10px; line-height: 1.45; color: var(--text-dim); margin-top: 3px; }
+
+.wb-toggle { display: flex; align-items: center; gap: 7px; font-size: 11px; cursor: pointer; margin-bottom: 6px; }
+.wb-toggle input { accent-color: var(--accent); }
+
+.wb-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.wb-exportrow { display: flex; gap: 6px; margin-bottom: 8px; }
+.wb-json { width: 100%; font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.35; resize: vertical; }
+
+/* ---- map ---- */
+.wb-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.wb-maptools {
+  display: flex; align-items: center; gap: 16px;
+  padding: 7px 14px; border-bottom: 1px solid var(--border); background: var(--bg-panel);
+}
+.wb-maptools .wb-toggle { margin-bottom: 0; }
+.wb-legend { margin-left: auto; display: flex; align-items: center; gap: 7px; font-size: 10px; color: var(--text-dim); }
+.wb-legend i { width: 11px; height: 11px; border-radius: 50%; border: 2px solid transparent; display: inline-block; margin-left: 9px; }
+
+.wb-mapwrap { position: relative; flex: 1; min-height: 0; }
+.wb-map { width: 100%; height: 100%; display: block; background: var(--bg); cursor: grab; }
+.wb-map:active { cursor: grabbing; }
+
+.wb-tooltip {
+  position: absolute; top: 12px; right: 12px; min-width: 190px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+  padding: 9px 11px; font-size: 11px; pointer-events: none;
+}
+.wb-tooltip strong { display: block; color: var(--text-head); font-size: 13px; }
+.wb-zone { display: inline-block; margin: 3px 0 7px; font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .5px; }
+.wb-zone-metropolitan { color: #8f9ed0; }
+.wb-zone-industrial   { color: #c0a081; }
+.wb-zone-rural        { color: #8fb07f; }
+.wb-zone-coastal      { color: #7fb4c0; }
+.wb-tooltip dl { display: grid; grid-template-columns: auto auto; gap: 2px 12px; margin: 0; }
+.wb-tooltip dt { color: var(--text-dim); }
+.wb-tooltip dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- stats ---- */
+.wb-stats {
+  display: flex; flex-wrap: wrap; gap: 0;
+  border-top: 1px solid var(--border); background: var(--bg-panel);
+}
+.wb-stat { padding: 7px 14px; border-right: 1px solid var(--border); min-width: 104px; }
+.wb-stat-label { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); }
+.wb-stat-value { font-size: 13px; color: var(--text); font-variant-numeric: tabular-nums; }
+.wb-stat.is-warn .wb-stat-value { color: var(--warn); }
+
+.wb-notice {
+  position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-card); border: 1px solid var(--accent); border-radius: 6px;
+  padding: 8px 16px; font-size: 12px; color: var(--text-head);
+}
+
+@media (max-width: 900px) {
+  .wb-body { flex-direction: column; }
+  .wb-panel { width: 100%; max-height: 42vh; border-right: none; border-bottom: 1px solid var(--border); }
+}

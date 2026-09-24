@@ -1,64 +1,12 @@
 import { useRef, useCallback, useMemo } from "react";
-import { Delaunay } from "d3-delaunay";
 import { useGameStore } from "../../store/gameStore";
-import type { Firm, ZoneChar } from "../../types";
+import type { Firm } from "../../types";
+import { computeTerrain, ZONE_FILL, WATER_FILL, COASTLINE, ROAD_COLOR, HIGHWAY_COLOR, nodeRadius } from "./terrain";
 
 const MAP_W = 1000;
 const MAP_H = 700;
 const FIRM_R = 8;
 const FIRM_ORBIT = 46;
-
-// ------------------------------------------------------------------
-// Terrain layer
-//
-// A Voronoi diagram over the existing node positions, drawn underneath the
-// links. This is purely cosmetic: it reads node.position and node.zone and
-// changes nothing about generation or topology. Its job is to give the empty
-// space a body, so the map reads as land-and-sea rather than as a graph on a
-// void, and so link lengths have something to be measured against.
-//
-// Water is NOT produced by the Voronoi — a Voronoi has no concept of a coast
-// and would happily hand a port a landlocked cell. It is an explicit rect
-// behind the land, and the land is clipped to a smaller box so the difference
-// between the two shows as sea on every side. Ports are pushed into the
-// portEdgeMargin band of the canvas edge during generation, so they land in
-// that coastal strip.
-// ------------------------------------------------------------------
-
-/** Breathing room between the outermost node and the coastline, in map units. */
-const LAND_MARGIN = 55;
-/** How far the sea extends beyond the coastline. */
-const WATER_MARGIN = 340;
-
-/**
- * Muted terrain tones, one per zone character. All are darker than ROAD_COLOR
- * below so roads stay legible on top, and darker than every node fill so the
- * cities keep their figure-ground separation.
- */
-const ZONE_FILL: Record<ZoneChar, string> = {
-  metropolitan: "#272c3b",  // slate violet — built-up
-  industrial:   "#302a26",  // warm brown-grey — works and yards
-  rural:        "#232c22",  // dark olive — farmland
-  coastal:      "#1d2c30",  // dark teal — estuary and dune
-};
-
-const WATER_FILL     = "#0a1017";  // a shade below --bg, so the coastline reads
-const COASTLINE      = "#33485e";
-
-/**
- * Road stroke. The previous value was --border (#2a3347), chosen against a plain
- * black background; over terrain it disappeared completely. --text-dim is the
- * palette's existing "legible but recessive" tone and clears every ZONE_FILL.
- */
-const ROAD_COLOR = "#6b7a94";
-
-// Radius scales logarithmically with population: 7px at 15k → 32px at 950k
-const LOG_POP_MIN = Math.log10(15_000);
-const LOG_POP_MAX = Math.log10(950_000);
-function nodeRadius(pop: number): number {
-  const t = (Math.log10(Math.max(pop, 15_000)) - LOG_POP_MIN) / (LOG_POP_MAX - LOG_POP_MIN);
-  return Math.round(7 + 25 * t);
-}
 
 export default function NodeMap() {
   const { gameState, selectedNodeId, selectedFirmId, selectNode, selectFirm, openStoreFirm, openCityScreen,
@@ -67,41 +15,10 @@ export default function NodeMap() {
 
   // Terrain geometry. Node positions never change after generation, so this is
   // computed once per game and memoised on the node record identity.
-  const terrain = useMemo(() => {
-    const nodes = Object.values(gameState?.cityNodes ?? {});
-    if (nodes.length < 3) return null;   // Delaunay is degenerate below 3 points
-
-    const xs = nodes.map((n) => n.position.x);
-    const ys = nodes.map((n) => n.position.y);
-    const land = {
-      x0: Math.min(...xs) - LAND_MARGIN,
-      y0: Math.min(...ys) - LAND_MARGIN,
-      x1: Math.max(...xs) + LAND_MARGIN,
-      y1: Math.max(...ys) + LAND_MARGIN,
-    };
-
-    const delaunay = Delaunay.from(nodes, (n) => n.position.x, (n) => n.position.y);
-    // Clipping the Voronoi to the land box is what stops the outermost cells —
-    // the ports, by construction — from running off to infinity.
-    const voronoi = delaunay.voronoi([land.x0, land.y0, land.x1, land.y1]);
-
-    const cells = nodes.map((n, i) => ({
-      id: n.id,
-      zone: n.zone,
-      d: voronoi.renderCell(i),
-    })).filter((c) => c.d);
-
-    return {
-      cells,
-      land,
-      water: {
-        x0: land.x0 - WATER_MARGIN,
-        y0: land.y0 - WATER_MARGIN,
-        w:  land.x1 - land.x0 + WATER_MARGIN * 2,
-        h:  land.y1 - land.y0 + WATER_MARGIN * 2,
-      },
-    };
-  }, [gameState?.cityNodes]);
+  const terrain = useMemo(
+    () => computeTerrain(Object.values(gameState?.cityNodes ?? {})),
+    [gameState?.cityNodes]
+  );
 
   // Pan/zoom state lives in the store so it survives city screen open/close
   const dragging = useRef(false);
@@ -224,7 +141,7 @@ export default function NodeMap() {
               key={link.id}
               x1={from.position.x} y1={from.position.y}
               x2={to.position.x}   y2={to.position.y}
-              stroke={isHighway ? "#c87a1a" : ROAD_COLOR}
+              stroke={isHighway ? HIGHWAY_COLOR : ROAD_COLOR}
               strokeWidth={isHighway ? 3 : 1 + link.investmentLevel}
               strokeLinecap="round"
               opacity={isHighway ? 0.85 : 0.75}
